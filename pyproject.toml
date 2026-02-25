@@ -20,7 +20,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = ["equinox>=0.11.0", "jax>=0.4.20"]
-description = "Efficiently get the index-0 element of an iterable."
+description = "A bounded (and autodiff friendly) while loop in JAX."
 dynamic = ["version"]
 license.file = "LICENSE"
 name = "jax-bounded-while"
