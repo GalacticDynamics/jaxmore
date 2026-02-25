@@ -6,4 +6,4 @@
 
 # This helps protect against unauthorized changes to CI/CD pipelines and automation
 
-/.github/ @GalacticDynamics/jax-bounded-while-maintainers
+/.github/ @GalacticDynamics/jaxmore-maintainers

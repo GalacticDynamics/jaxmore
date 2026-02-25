@@ -71,7 +71,7 @@ pytest
 Use pytest-cov to generate coverage reports:
 
 ```bash
-pytest --cov=jax-bounded-while
+pytest --cov=jaxmore
 ```
 
 # Building docs

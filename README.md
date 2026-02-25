@@ -1,24 +1,22 @@
-<h1 align='center'> jax-bounded-while </h1>
-<h3 align="center">Bounded while loop in JAX.</h3>
+<h1 align='center'> jaxmore </h1>
+<h3 align="center">There's more to JAX.</h3>
 
 <p align="center">
-    <a href="https://pypi.org/project/jax-bounded-while/"> <img alt="PyPI version" src="https://img.shields.io/pypi/v/jax-bounded-while" /> </a>
-    <a href="https://pypi.org/project/jax-bounded-while/"> <img alt="PyPI platforms" src="https://img.shields.io/pypi/pyversions/jax-bounded-while" /> </a>
-    <a href="https://github.com/GalacticDynamics/jax-bounded-while/actions"> <img alt="Actions status" src="https://github.com/GalacticDynamics/jax-bounded-while/workflows/CI/badge.svg" /> </a>
+    <a href="https://pypi.org/project/jaxmore/"> <img alt="PyPI version" src="https://img.shields.io/pypi/v/jaxmore" /> </a>
+    <a href="https://pypi.org/project/jaxmore/"> <img alt="PyPI platforms" src="https://img.shields.io/pypi/pyversions/jaxmore" /> </a>
+    <a href="https://github.com/GalacticDynamics/jaxmore/actions"> <img alt="Actions status" src="https://github.com/GalacticDynamics/jaxmore/workflows/CI/badge.svg" /> </a>
 </p>
 
-This is a micro-package, containing the single function `bounded_while_loop`.
-</br> Reverse-mode-friendly, bounded `while_loop` implemented via `lax.scan`.
+This package provides some useful functionality that is missing in base `JAX`.
+Major features include:
 
-> **Note:** This library is being renamed to **`jaxmore`** and expanded in
-> scope. In addition to `bounded_while_loop`, it will include more JAX-related
-> functionality — such as a `vmap` that supports keyword arguments. This will be
-> the last release for `jax-bounded-while`.
+- `bounded_while_loop` — a reverse-mode-friendly, bounded `while_loop`
+  implemented via `lax.scan`.
 
 ## Installation
 
 ```bash
-pip install jax-bounded-while
+pip install jaxmore
 ```
 
 ## Examples
@@ -27,7 +25,7 @@ Simple loop over a scalar:
 
 ```python
 import jax.numpy as jnp
-from jax_bounded_while import bounded_while_loop
+from jaxmore import bounded_while_loop
 
 
 def cond_fn(x):
@@ -46,7 +44,7 @@ PyTree carry (tuple):
 
 ```python
 import jax.numpy as jnp
-from jax_bounded_while import bounded_while_loop
+from jaxmore import bounded_while_loop
 
 
 def cond_fn(state):

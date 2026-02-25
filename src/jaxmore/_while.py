@@ -26,7 +26,7 @@ def bounded_while_loop(
 
     This function emulates:
 
-    ```python
+    ```
     val = init_val
     i = 0
     while cond_fn(val) and i < max_steps:
@@ -39,7 +39,7 @@ def bounded_while_loop(
 
     1. **A hard iteration bound**: the loop is unrolled as a fixed-length `scan`
        of length `max_steps`. This is often much friendlier to reverse-mode AD
-       than an unbounded `lax.while_loop`.
+       than an unbounded `jax.lax.while_loop`.
     2. **Early stop without wasted work**: once the user condition fails
        (i.e. `cond_fn(val)` becomes `False`), we stop applying `body_fn` and
        run only a no-op for the remaining scan steps. This preserves the fixed
@@ -73,7 +73,7 @@ def bounded_while_loop(
     Simple loop over a scalar value:
 
     >>> import jax.numpy as jnp
-    >>> from jax_bounded_while import bounded_while_loop
+    >>> from jaxmore import bounded_while_loop
     >>> def cond_fn(x):
     ...     return x < 5
     >>> def body_fn(x):
