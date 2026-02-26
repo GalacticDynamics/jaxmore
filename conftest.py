@@ -4,7 +4,8 @@ import platform
 from doctest import ELLIPSIS, NORMALIZE_WHITESPACE
 
 from sybil import Sybil
-from sybil.parsers.rest import DocTestParser, PythonCodeBlockParser, SkipParser
+from sybil.parsers.markdown import PythonCodeBlockParser, SkipParser
+from sybil.parsers.rest import DocTestParser
 
 # TODO: stop skipping doctests on Windows when there is uniform support for
 #       numpy 2.0+ scalar repr. On windows it is printed as 1.0 instead of
@@ -20,5 +21,5 @@ parsers = (
 
 pytest_collect_file = Sybil(
     parsers=parsers,
-    patterns=["*.rst", "*.py"],
+    patterns=["*.md", "*.py"],
 ).pytest()

@@ -20,18 +20,18 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = ["equinox>=0.11.0", "jax>=0.4.20"]
-description = "A bounded (and autodiff friendly) while loop in JAX."
+description = "There's more to JAX."
 dynamic = ["version"]
 license.file = "LICENSE"
-name = "jax-bounded-while"
+name = "jaxmore"
 readme = "README.md"
 requires-python = ">=3.10"
 
 [project.urls]
-"Bug Tracker" = "https://github.com/GalacticDynamics/jax-bounded-while/issues"
-Changelog     = "https://github.com/GalacticDynamics/jax-bounded-while/releases"
-Discussions   = "https://github.com/GalacticDynamics/jax-bounded-while/discussions"
-Homepage      = "https://github.com/GalacticDynamics/jax-bounded-while"
+"Bug Tracker" = "https://github.com/GalacticDynamics/jaxmore/issues"
+Changelog     = "https://github.com/GalacticDynamics/jaxmore/releases"
+Discussions   = "https://github.com/GalacticDynamics/jaxmore/discussions"
+Homepage      = "https://github.com/GalacticDynamics/jaxmore"
 
 
 [build-system]
@@ -71,7 +71,7 @@ test = [
 
 
 [tool.hatch]
-build.hooks.vcs.version-file = "src/jax_bounded_while/_version.py"
+build.hooks.vcs.version-file = "src/jaxmore/_version.py"
 build.hooks.vcs.version-file-template = """\
 version: str = {version!r}
 version_tuple: tuple[int, int, int] | tuple[int, int, int, str, str]
@@ -90,11 +90,11 @@ name = "cz_gitmoji"
 
 [tool.pytest.ini_options]
 addopts = [
-  "--jaxtyping-packages=jax_bounded_while,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))",
+  "--jaxtyping-packages=jaxmore,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))",
   "--showlocals",
   "--strict-config",
   "--strict-markers",
-  "-p no:doctest",                                                                                                               # using sybil
+  "-p no:doctest",                                                                                                     # using sybil
   "-ra",
 ]
 filterwarnings = ["error"]
@@ -106,7 +106,7 @@ xfail_strict = true
 
 [tool.coverage]
 report.exclude_also = ['\.\.\.', 'if typing.TYPE_CHECKING:']
-run.source          = ["jax_bounded_while"]
+run.source          = ["jaxmore"]
 
 [tool.mypy]
 disallow_incomplete_defs = false
@@ -121,7 +121,7 @@ warn_unused_configs      = true
 [[tool.mypy.overrides]]
 disallow_incomplete_defs = true
 disallow_untyped_defs    = true
-module                   = "jax_bounded_while.*"
+module                   = "jaxmore.*"
 
 
 [tool.ruff]
@@ -149,7 +149,7 @@ ignore = [
 combine-as-imports     = true
 extra-standard-library = ["typing_extensions"]
 known-first-party      = ["optional_dependencies"]
-known-local-folder     = ["jax_bounded_while"]
+known-local-folder     = ["jaxmore"]
 
 
 [tool.pylint]

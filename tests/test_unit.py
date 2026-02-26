@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from jax_bounded_while import bounded_while_loop
+from jaxmore import bounded_while_loop
 
 
 def test_scalar_loop_stops_on_condition() -> None:

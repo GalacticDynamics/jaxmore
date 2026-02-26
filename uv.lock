@@ -860,7 +860,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jax-bounded-while"
+name = "jaxmore"
 source = { editable = "." }
 dependencies = [
     { name = "equinox" },

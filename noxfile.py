@@ -36,13 +36,13 @@ def precommit(s: nox.Session, /) -> None:
 @session(uv_groups=["lint"], reuse_venv=True)
 def pylint(s: nox.Session, /) -> None:
     """Run PyLint."""
-    s.run("pylint", "src/jax_bounded_while", *s.posargs)
+    s.run("pylint", "src/jaxmore", *s.posargs)
 
 
 @session(uv_groups=["lint"], reuse_venv=True)
 def mypy(s: nox.Session, /) -> None:
     """Run mypy."""
-    s.run("mypy", "src/jax_bounded_while", *s.posargs)
+    s.run("mypy", "src/jaxmore", *s.posargs)
 
 
 # =============================================================================
