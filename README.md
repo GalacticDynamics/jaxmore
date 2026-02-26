@@ -10,9 +10,12 @@
 This is a micro-package, containing the single function `bounded_while_loop`.
 </br> Reverse-mode-friendly, bounded `while_loop` implemented via `lax.scan`.
 
-## Installation
+> **Note:** This library is being renamed to **`jaxmore`** and expanded in
+> scope. In addition to `bounded_while_loop`, it will include more JAX-related
+> functionality — such as a `vmap` that supports keyword arguments. This will be
+> the last release for `jax-bounded-while`.
 
-<!-- [![Conda-Forge][conda-badge]][conda-link] -->
+## Installation
 
 ```bash
 pip install jax-bounded-while
