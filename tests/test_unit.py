@@ -80,7 +80,7 @@ def test_max_steps_zero_returns_init_without_calling_fns() -> None:
     assert float(result["x"]) == 1.0
 
 
-@pytest.mark.parametrize("max_steps", [-1, 1.5, "3"])  # type: ignore[list-item]
+@pytest.mark.parametrize("max_steps", [-1, 1.5, "3"])
 def test_invalid_max_steps_raises(max_steps) -> None:
     """Reject non-integer or negative values for `max_steps`."""
 
