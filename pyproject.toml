@@ -137,13 +137,14 @@ ignore = [
   "COM812",  # Conflicts with formatter
   "PLR09",   # Too many <...>
   "PLR2004", # Magic value used in comparison
+  "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
   "TD002",   # Missing author in TODO
   "TD003",   # Missing issue link on the line following this TODO
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "noxfile.py" = ["T20"]
-"tests/**"   = ["ANN", "INP001", "S101", "T20"]
+"tests/**"   = ["ANN", "E731", "INP001", "S101", "T20"]
 
 [tool.ruff.lint.isort]
 combine-as-imports     = true
