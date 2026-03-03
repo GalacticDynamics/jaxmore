@@ -107,7 +107,7 @@ print(vmul(jnp.arange(4.0)))  # Array([ 1.,  4.,  7., 10.], dtype=float32)
 
 ### `bounded_while_loop`
 
-If you know a loop will terminate before `n` steps then `bounded_while_loop` is better than a normal while loop.
+If you know a loop will terminate before `max_steps` steps then `bounded_while_loop` is better than a normal while loop.
 `bounded_while_loop` uses `jax.lax.scan` under the hood, enabling both forward-mode and backward-mode differentiation.
 Speed and efficiency are maintained by evaluating the termination condition and, when satisfied, switching to a no-op function that jax compiles away under jit for all remaining steps.
 
