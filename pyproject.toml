@@ -19,7 +19,7 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
-dependencies = ["equinox>=0.11.0", "jax>=0.4.20"]
+dependencies = ["jax>=0.4.20", "jaxtyping>=0.3.7", "optional_dependencies>=0.3"]
 description = "There's more to JAX."
 dynamic = ["version"]
 license.file = "LICENSE"
@@ -32,6 +32,10 @@ requires-python = ">=3.10"
 Changelog     = "https://github.com/GalacticDynamics/jaxmore/releases"
 Discussions   = "https://github.com/GalacticDynamics/jaxmore/discussions"
 Homepage      = "https://github.com/GalacticDynamics/jaxmore"
+
+[project.optional-dependencies]
+equinox = ["equinox>=0.11.0"]
+tqdm    = ["jax-tqdm>=0.1.0"]
 
 
 [build-system]
@@ -61,13 +65,15 @@ lint = ["mypy>=1.19.0", "pre-commit>=4.1.0", "pylint>=3.3.8"]
 nox = ["nox>=2024.10.9", "nox-uv>=0.6.3"]
 test = [
   "beartype>=0.19.0",
+  "equinox>=0.11.0",
+  "jax-tqdm>=0.1.0",
   "jaxtyping>=0.2.34",
-  "optional_dependencies>=0.3",
+  "optax>=0.2.0",
   "pytest>=8.4.2",
   "pytest-benchmark>=5.1.0",
   "pytest-cov>=6.2.1",
   "pytest-github-actions-annotate-failures>=0.3.0",
-  "sybil[pytest]>=9.2.0",
+  "sybil>=9.2.0",
 ]
 
 
@@ -101,7 +107,10 @@ addopts = [
   "-p no:doctest",                                                                                                     # using sybil
   "-ra",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+  "error",
+  "ignore:Setting `jax_pmap_shmap_merge` is deprecated:DeprecationWarning",
+]
 log_cli_level = "INFO"
 markers = ["benchmark: benchmarks (deselect with '-m \"not benchmark\"')"]
 minversion = "8.3"
@@ -172,6 +181,10 @@ ignore-paths = [".*/_version.py"]
 messages_control.disable = [
   "design",
   "fixme",
+  "import-error",
+  "import-outside-toplevel",
+  "invalid-enum-extension",
+  "invalid-name",
   "line-too-long",
   "missing-function-docstring",
   "missing-module-docstring",
