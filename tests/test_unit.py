@@ -116,6 +116,25 @@ def test_raises_when_condition_never_false() -> None:
         bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3)
 
 
+def test_no_raise_when_condition_never_false_if_check_disabled() -> None:
+    """Return bounded result without error when `check_termination=False`."""
+
+    def cond_fn(_: jax.Array):
+        return True
+
+    def body_fn(x):
+        return x + 1
+
+    result = bounded_while_loop(
+        cond_fn,
+        body_fn,
+        jnp.asarray(0),
+        max_steps=3,
+        check_termination=False,
+    )
+    assert int(result) == 3
+
+
 def test_jit_compilation() -> None:
     """Work correctly under `jax.jit` compilation."""
 
@@ -131,3 +150,26 @@ def test_jit_compilation() -> None:
 
     result = run(jnp.asarray(0))
     assert int(result) == 4
+
+
+def test_jit_compilation_with_check_disabled() -> None:
+    """Work correctly under `jax.jit` when check is disabled."""
+
+    def cond_fn(_: jax.Array):
+        return True
+
+    def body_fn(x):
+        return x + 2
+
+    @jax.jit
+    def run(x):
+        return bounded_while_loop(
+            cond_fn,
+            body_fn,
+            x,
+            max_steps=5,
+            check_termination=False,
+        )
+
+    result = run(jnp.asarray(0))
+    assert int(result) == 10
