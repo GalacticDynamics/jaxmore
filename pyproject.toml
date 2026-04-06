@@ -137,6 +137,7 @@ extend-select = ["ALL"]
 ignore = [
   "D203",    # 1 blank line required before class docstring
   "D213",    # Multi-line docstring summary should start at the second line
+  "EM101",   # Exception must not use a string literal
   "FIX002",  # Line contains TODO, consider resolving the issue
   "ISC001",  # Conflicts with formatter
   "COM812",  # Conflicts with formatter
@@ -145,11 +146,19 @@ ignore = [
   "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
   "TD002",   # Missing author in TODO
   "TD003",   # Missing issue link on the line following this TODO
+  "TRY003",  # Avoid specifying long messages outside the exception class
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "noxfile.py" = ["T20"]
-"tests/**"   = ["ANN", "E731", "INP001", "S101", "T20"]
+"tests/**" = [
+  "ANN",
+  "D102",   # Missing docstring in public method
+  "E731",
+  "INP001",
+  "S101",
+  "T20",
+]
 
 [tool.ruff.lint.isort]
 combine-as-imports     = true
@@ -171,3 +180,6 @@ messages_control.disable = [
 py-version = "3.10"
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
+
+[tool.pylint.basic]
+typealias-rgx = "[A-Z][a-zA-Z0-9]*"
