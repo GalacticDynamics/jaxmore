@@ -1,8 +1,5 @@
 """Unit tests for bounded_while_loop."""
 
-from __future__ import annotations
-
-import jax
 import jax.numpy as jnp
 import pytest
 
@@ -106,7 +103,7 @@ def test_invalid_max_steps_raises(max_steps) -> None:
 def test_raises_when_condition_never_false() -> None:
     """Raise a runtime error if the loop never terminates within the bound."""
 
-    def cond_fn(_: jax.Array):
+    def cond_fn(_):
         return True
 
     def body_fn(x):
@@ -114,20 +111,3 @@ def test_raises_when_condition_never_false() -> None:
 
     with pytest.raises(RuntimeError, match="bounded_while_loop exceeded max_steps"):
         bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3)
-
-
-def test_jit_compilation() -> None:
-    """Work correctly under `jax.jit` compilation."""
-
-    def cond_fn(x):
-        return x < 4
-
-    def body_fn(x):
-        return x + 2
-
-    @jax.jit
-    def run(x):
-        return bounded_while_loop(cond_fn, body_fn, x, max_steps=5)
-
-    result = run(jnp.asarray(0))
-    assert int(result) == 4

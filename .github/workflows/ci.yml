@@ -62,13 +62,50 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: [tests]
+    permissions:
+      contents: write
+      deployments: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+
+      - name: Install
+        run: uv sync --no-default-groups --group nox --group test --locked
+
+      - name: Run benchmarks
+        run: |
+          uv run --frozen nox -s benchmark
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@a60cea5bc7b49e15c1f58f411161f99e0df48372 # v1.22.0
+        with:
+          name: jaxmore Benchmarks
+          tool: pytest
+          output-file-path: benchmark-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # prettier-ignore
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          alert-threshold: "150%"
+          comment-on-alert: true
+          fail-on-alert: true
+          alert-comment-cc-users: "@nstarman"
+          summary-always: true
+
   status:
     name: CI Pass
     runs-on: ubuntu-latest
-    needs: [format, tests]
+    needs: [format, tests, benchmarks]
     if: always()
     steps:
       - name: All required jobs passed
-        uses: re-actors/alls-green@release/v1
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
           jobs: ${{ toJSON(needs) }}

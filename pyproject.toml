@@ -64,6 +64,7 @@ test = [
   "jaxtyping>=0.2.34",
   "optional_dependencies>=0.3",
   "pytest>=8.4.2",
+  "pytest-benchmark>=5.1.0",
   "pytest-cov>=6.2.1",
   "pytest-github-actions-annotate-failures>=0.3.0",
   "sybil[pytest]>=9.2.0",
@@ -90,6 +91,9 @@ name = "cz_gitmoji"
 
 [tool.pytest.ini_options]
 addopts = [
+  "--benchmark-disable",
+  "--ignore=tests/benchmark",
+  "--import-mode=importlib",
   "--jaxtyping-packages=jaxmore,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))",
   "--showlocals",
   "--strict-config",
@@ -99,6 +103,7 @@ addopts = [
 ]
 filterwarnings = ["error"]
 log_cli_level = "INFO"
+markers = ["benchmark: benchmarks (deselect with '-m \"not benchmark\"')"]
 minversion = "8.3"
 testpaths = ["src/", "tests/", "README", "docs"]
 xfail_strict = true
