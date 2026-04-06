@@ -2,5 +2,4 @@
 
 __all__ = ("bounded_while_loop", "vmap")
 
-from ._vmap import vmap
-from ._while import bounded_while_loop
+from ._src import bounded_while_loop, vmap
