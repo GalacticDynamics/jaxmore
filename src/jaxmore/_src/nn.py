@@ -193,17 +193,17 @@ def shuffle_and_batch(
     sorted_mask = mask[sort_perm]
     sorted_args = tuple(arr[sort_perm] for arr in args)
 
-    # Step 2: Create shuffle permutation that keeps True and False groups
-    # separate Generate random values for shuffling
+    # Step 2: Build a shuffle permutation that keeps the True and False groups
+    # separate. Sorting by a random key shuffles; offsetting the False group's
+    # keys by +1.0 puts them in a disjoint, strictly higher range, so the sort
+    # shuffles *within* each group without interleaving them.
     rand_vals_true = jr.uniform(key, shape=(N,))
     rand_vals_false = jr.uniform(jr.fold_in(key, 1), shape=(N,))
 
-    # Combine random values: True positions get small values, False get large
-    # values
     combined_rand = jnp.where(
         sorted_mask,
-        rand_vals_true,  # True positions: small random values
-        1.0 + rand_vals_false,  # False positions: large random values
+        rand_vals_true,  # True positions -> [0, 1)
+        1.0 + rand_vals_false,  # False positions -> [1, 2)
     )
 
     # Permutation that shuffles within groups

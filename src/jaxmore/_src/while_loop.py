@@ -87,6 +87,36 @@ def bounded_while_loop(
         Final carry value, either when `cond_fn` first returns `False`, or (if
         that never happens) after `max_steps` iterations.
 
+        Note that the second case is only *returned* when
+        ``check_termination=False``. With the default ``check_termination=True``,
+        exhausting `max_steps` while `cond_fn` is still `True` raises instead of
+        returning -- see Raises.
+
+    Raises
+    ------
+    ValueError
+        If `max_steps` is not a non-negative Python int. Raised eagerly, at trace
+        time.
+    RuntimeError
+        If ``check_termination=True`` (the default) and `cond_fn` never became
+        `False` within `max_steps` iterations -- i.e. the bounded loop
+        "overflowed". Raised at *runtime*, after the scan. Pass
+        ``check_termination=False`` to return the truncated carry instead.
+
+        The concrete type depends on which backend supplies the check, so catch
+        `RuntimeError` (their common base) rather than either subclass:
+
+        - with ``equinox`` installed: `equinox.EquinoxRuntimeError`, and the
+          message is prefixed with Equinox's JIT stack-trace preamble. Its
+          behaviour is further configurable via the ``EQX_ON_ERROR``
+          environment variable.
+        - without ``equinox``: `jax.errors.JaxRuntimeError`, whose message is
+          exactly the text below.
+
+        In both cases the message contains
+        ``"bounded_while_loop exceeded max_steps without cond_fn becoming
+        False."``
+
     Examples
     --------
     Simple loop over a scalar value:
@@ -111,6 +141,27 @@ def bounded_while_loop(
     >>> bounded_while_loop(cond_fn, body_fn, (jnp.asarray(0), jnp.asarray(1)),
     ...                    max_steps=5)
     (Array(3, dtype=int32, ...), Array(8, dtype=int32, ...))
+
+    If `max_steps` is exhausted while `cond_fn` is still `True`, the loop has
+    "overflowed" and -- by default -- this is an error, not a silent truncation.
+    Catch `RuntimeError`: the exact subclass depends on whether ``equinox`` is
+    installed (see Raises).
+
+    >>> def cond_fn(x):
+    ...     return x < 100
+    >>> def body_fn(x):
+    ...     return x + 1
+    >>> try:
+    ...     bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3)
+    ... except RuntimeError as e:
+    ...     print("exceeded max_steps" in str(e))
+    True
+
+    Pass ``check_termination=False`` to opt out and take the truncated carry:
+
+    >>> bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3,
+    ...                    check_termination=False)
+    Array(3, dtype=int32, ...)
 
     Notes
     -----
