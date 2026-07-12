@@ -67,27 +67,29 @@ def error_if(
 
     Examples
     --------
-    Basic usage (raises error if condition is true):
+    The value passes through untouched when the condition is False:
 
-    .. code-block:: python
+    >>> import jax.numpy as jnp
+    >>> from jaxmore import error_if
+    >>> x = jnp.array(5)
+    >>> error_if(x, x > 10, "x is too large")
+    Array(5, dtype=int32...)
 
-        import jax.numpy as jnp
-        from jaxmore._src import error_if
+    When it is True, the error is raised at runtime:
 
-        x = jnp.array(5)
-        result = error_if(x, x > 10, "x is too large")
-        # result = Array(5, dtype=int32)
+    >>> import jax
+    >>> y = jnp.array(15)
+    >>> try:
+    ...     error_if(y, y > 10, "y is too large")
+    ... except jax.errors.JaxRuntimeError as e:
+    ...     print(e)
+    y is too large
 
-    Disable error checking for performance:
+    Set ``on_error="off"`` to skip the check entirely -- a complete no-op, with
+    no callback executed:
 
-    .. code-block:: python
-
-        import jax.numpy as jnp
-        from jaxmore._src import error_if
-
-        x = jnp.array(15)
-        result = error_if(x, x > 10, "ignored", on_error="off")
-        # No callback is executed; this is a complete no-op
+    >>> error_if(y, y > 10, "ignored", on_error="off")
+    Array(15, dtype=int32...)
 
     Notes
     -----

@@ -290,7 +290,6 @@ def jit_func(obj):
 print(int(jit_func(jnp.asarray(4))))  # 5
 ```
 
-
 ### `jaxmore.nn` — efficient neural network training with JAX scan
 
 The `AbstractScanNNTrainer` class provides a foundation for building efficient
@@ -317,20 +316,12 @@ import optax
 from jaxmore.nn import AbstractScanNNTrainer, masked_mean
 
 
-# Define a simple neural network using eqx.nn.MLP
-model = eqx.nn.MLP(
-    in_size=2,
-    out_size=1,
-    width_size=32,
-    depth=2,
-    activation=jax.nn.relu,
-    key=jr.key(0),
-)
-
-
-# Create a trainer subclass
+# Create a trainer subclass. You implement three hooks:
+#   init()               -- build the initial carry and the epoch data
+#   pack_carry_state()   -- split the carry into arrays + static structure
+#   unpack_carry_state() -- put it back together
 class NNTrainer(AbstractScanNNTrainer):
-    """Concrete trainer implementation for SimpleNN."""
+    """Trainer for a small feed-forward regressor."""
 
     def init(self, *, key, X, y, learning_rate=1e-2):
         """Initialize model and training data."""
@@ -347,11 +338,12 @@ class NNTrainer(AbstractScanNNTrainer):
         optimizer = optax.adam(learning_rate)
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
-        # Create training carry: (model, optimizer_state, rng_key)
+        # Training carry: (model, optimizer_state, rng_key)
         carry_key = jr.fold_in(data_key, 0)
         initial_carry = (model, opt_state, carry_key)
 
-        # All samples are usable (True), none are padding (False)
+        # Every sample is usable here. Mark a sample False to have the trainer
+        # carry it along but never train on it.
         mask = jnp.ones(len(X), dtype=bool)
         epoch_data = (mask, (X, y))
 
@@ -366,25 +358,27 @@ class NNTrainer(AbstractScanNNTrainer):
     def unpack_carry_state(self, carry, static):
         """Reconstruct full model from partitioned state."""
         model_dyn, opt_state, key = carry
-        model_static = static["model_static"]
-        model = eqx.combine(model_dyn, model_static)
+        model = eqx.combine(model_dyn, static["model_static"])
         return (model, opt_state, key)
 
 
-# Define optimizer
+# The optimizer is captured in the closure below. See "Optimizer Passing
+# Strategies" for the alternatives.
 optimizer = optax.adam(1e-2)
 
 
-# Define the per-batch training step
+# The per-batch training step. `make_step` is passed to the constructor -- it is
+# NOT a method you override.
 def make_step(carry, batch_inputs):
     """Execute one batch of training."""
     model, opt_state, key = carry
     batch_mask, (X_batch, y_batch) = batch_inputs
 
     def loss_fn(model):
-        preds = jax.vmap(model)(X_batch)
-        mse = jnp.mean((preds.squeeze() - y_batch) ** 2)
-        return mse
+        preds = jax.vmap(model)(X_batch).squeeze(-1)
+        # NOTE: average over *real* rows only. Batches are zero-padded to a
+        # constant shape, so `jnp.mean` here would train on the padding.
+        return masked_mean((preds - y_batch) ** 2, batch_mask)
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     updates, opt_state = optimizer.update(grads, opt_state)
@@ -409,10 +403,11 @@ final_carry, losses = trainer.run(
     num_epochs=10,
     batch_size=16,
     key=key,
-    show_pbar=False,
 )
 
-print(f"Final epoch loss: {losses[-1]:.6f}")  # doctest: +SKIP
+trained_model, _, _ = final_carry
+assert losses.shape == (10,)
+assert losses[-1] < losses[0]  # the loss went down
 ```
 
 Key features:
@@ -424,6 +419,41 @@ Key features:
   structure for efficient JIT compilation
 - **Loss aggregation** — Customize how per-batch losses combine into epoch
   losses
+
+#### ⚠️ Sharp Edge: Your Loss Must Respect `batch_mask`
+
+`shuffle_and_batch` pads the final batch so that every batch has the same shape
+— `jax.lax.scan` requires it. Those padded rows are **fake data** (zeros by
+default), and they are handed to your `make_step` along with a `batch_mask` that
+marks them False.
+
+If you ignore `batch_mask` and write the obvious thing:
+
+```python
+# WRONG -- trains on the zero-padded rows
+def loss_fn(model):
+    preds = jax.vmap(model)(X_batch).squeeze(-1)
+    return jnp.mean((preds - y_batch) ** 2)
+```
+
+…then with `N=100` and `batch_size=16` you have 112 slots, so **12 fabricated
+`(0, 0) -> 0` samples contribute a gradient every single epoch**. Nothing
+errors; your model just quietly fits noise.
+
+Use the mask:
+
+```python
+# RIGHT -- averages over real rows only
+def loss_fn(model):
+    preds = jax.vmap(model)(X_batch).squeeze(-1)
+    return masked_mean((preds - y_batch) ** 2, batch_mask)
+```
+
+The same applies to the `mask` you return from `init()`. Samples you mark False
+are sorted to the _end_ of the dataset, so they cluster into whole batches — a
+batch can legitimately contain zero usable samples. `masked_mean` returns `NaN`
+there (with a well-defined, zero gradient), and `AbstractScanNNTrainer` skips
+those batches entirely, so they never reach your `make_step`.
 
 #### ⚠️ Sharp Edge: Equinox Models Require `eqx.partition`
 
@@ -459,134 +489,262 @@ def unpack_carry_state(self, carry, static):
 This separates trainable arrays (which JAX can scan over) from static Python
 objects (which it cannot), enabling the training loop to work correctly.
 
-#### Optimizer Passing Strategies: Three Patterns
+#### Varying things across epochs
 
-When using `AbstractScanNNTrainer`, you have three options for passing the
-optimizer to your `make_step()` function. Each has different tradeoffs regarding
-flexibility, reusability, and code organization.
+Two optional hooks run once per epoch. Both receive `epoch_idx` (a traced
+scalar), `num_epochs` (a static Python int), and `epoch_key`. Override whichever
+you need; by default both are no-ops and are skipped entirely.
 
-##### **Option 1: Optimizer in Closure** (captured in `make_step`)
+| Hook                | Returns                          | Use it for                                                                    |
+| ------------------- | -------------------------------- | ----------------------------------------------------------------------------- |
+| `prepare_step_kw`   | a mapping, merged over `step_kw` | scalars: scheduled loss weights, annealed temperatures, curriculum thresholds |
+| `prepare_data_args` | the data tuple, before batching  | arrays with leading dim `N`: resampled negatives, augmentations               |
 
-The optimizer is captured in a closure inside the `make_step` function:
+The split matters: anything `prepare_data_args` returns goes through
+`shuffle_and_batch`, so it must be `N`-long. A scalar can't ride along — that's
+what `prepare_step_kw` is for.
+
+##### Scheduling a hyperparameter — `prepare_step_kw`
+
+Ramp a loss weight linearly from `1.0` to `5.0` over training:
 
 ```python
-# Create optimizer ONCE outside
-optimizer = optax.adam(1e-2)
+LAM_MIN, LAM_MAX = 1.0, 5.0
 
 
-# Define make_step with optimizer in closure
-def make_step(carry, batch_inputs):
+class RampTrainer(NNTrainer):
+    def prepare_step_kw(self, /, *, epoch_idx, num_epochs, epoch_key):
+        frac = epoch_idx / (num_epochs - 1) if num_epochs > 1 else 0.0
+        return {"lam": LAM_MIN + (LAM_MAX - LAM_MIN) * frac}
+
+
+def make_step_ramp(carry, batch_inputs, *, lam):  # <- arrives as a kwarg
     model, opt_state, key = carry
-    # optimizer is captured from outer scope
+    batch_mask, (X_batch, y_batch) = batch_inputs
+
+    def loss_fn(m):
+        preds = jax.vmap(m)(X_batch).squeeze(-1)
+        return lam * masked_mean((preds - y_batch) ** 2, batch_mask)
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     updates, opt_state = optimizer.update(grads, opt_state)
-    return loss, (model, opt_state, key)
+    return loss, (eqx.apply_updates(model, updates), opt_state, key)
 
 
-trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
+trainer = RampTrainer(make_step=make_step_ramp, loss_agg_fn=masked_mean)
+carry, epoch_data = trainer.init(key=key, X=X, y=y)
+_, losses = trainer.run(carry, epoch_data, num_epochs=6, batch_size=16, key=key)
+assert losses.shape == (6,)
 ```
 
-**Pros:**
+Keys returned by the hook take precedence over the static `step_kw` passed to
+`run()`. The returned values may be traced arrays — the batch scan closes over
+them, so they reach `make_step` as ordinary runtime values.
 
-- Simple and straightforward
-- Minimal boilerplate
+##### Resampling data each epoch — `prepare_data_args`
 
-**Cons:**
-
-- ⚠️ **Each optimizer change requires creating a new `make_step` function**
-- Limited flexibility for experimenting with different optimizers
-- The optimizer is "hidden" in the closure, not explicitly visible
-
-**When to use:** Simple scripts with a single, fixed optimizer configuration.
-
-**Limitation example:**
+Draw fresh random "negatives" every epoch, batched alongside the real samples:
 
 ```python
-# Want to try a different optimizer? You must create a new make_step:
-optimizer_sgd = optax.sgd(1e-2)
+lo, hi = X.min(axis=0), X.max(axis=0)
 
 
-def make_step_sgd(carry, batch_inputs):  # NEW function!
+class NegativesTrainer(NNTrainer):
+    def prepare_data_args(
+        self, carry, data_args, /, *, epoch_idx, num_epochs, epoch_key
+    ):
+        X_real, y_real = data_args
+        negatives = jr.uniform(epoch_key, shape=X_real.shape, minval=lo, maxval=hi)
+        return (X_real, y_real, negatives)  # make_step now sees three arrays
+
+
+def make_step_neg(carry, batch_inputs):
     model, opt_state, key = carry
-    updates, opt_state = optimizer_sgd.update(grads, opt_state)
-    return loss, (model, opt_state, key)
+    batch_mask, (X_batch, y_batch, X_neg) = batch_inputs
 
+    def loss_fn(m):
+        preds = jax.vmap(m)(X_batch).squeeze(-1)
+        fit = masked_mean((preds - y_batch) ** 2, batch_mask)
+        neg = masked_mean(jax.vmap(m)(X_neg).squeeze(-1) ** 2, batch_mask)
+        return fit + 0.01 * neg
 
-trainer_sgd = NNTrainer(make_step=make_step_sgd, ...)  # NEW trainer!
-```
-
-**Option 1b: Closure via Lambda Wrapping** (more flexible variant)
-
-A more flexible approach: define a single `make_step` that accepts `optimizer`
-as a kwarg, then wrap it in a lambda to capture the optimizer:
-
-```python
-# Define make_step that takes optimizer as a kwarg
-def make_step(carry, batch_inputs, *, optimizer):
-    model, opt_state, key = carry
-    # ... loss computation ...
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     updates, opt_state = optimizer.update(grads, opt_state)
-    return loss, (model, opt_state, key)
+    return loss, (eqx.apply_updates(model, updates), opt_state, key)
 
 
-# Create closures for different optimizers using lambda
-optimizer_adam = optax.adam(1e-2)
-optimizer_sgd = optax.sgd(1e-2)
-
-# Wrap with lambda to capture each optimizer
-make_step_adam = lambda carry, batch_inputs: make_step(
-    carry, batch_inputs, optimizer=optimizer_adam
-)
-make_step_sgd = lambda carry, batch_inputs: make_step(
-    carry, batch_inputs, optimizer=optimizer_sgd
-)
-
-# Use whichever closure you want
-trainer_adam = NNTrainer(make_step=make_step_adam, loss_agg_fn=masked_mean)
-trainer_sgd = NNTrainer(make_step=make_step_sgd, loss_agg_fn=masked_mean)
+trainer = NegativesTrainer(make_step=make_step_neg, loss_agg_fn=masked_mean)
+carry, epoch_data = trainer.init(key=key, X=X, y=y)
+_, losses = trainer.run(carry, epoch_data, num_epochs=10, batch_size=16, key=key)
+assert losses[-1] < losses[0]
 ```
 
-**Pros:**
+#### Freezing part of a model
 
-- ✅ **Fastest option** (5-10% faster than other approaches)
-- More flexible than bare Option 1 — easy to swap optimizers
-- Single `make_step` function definition
-- Still a closure-based approach
-
-**Cons:**
-
-- Requires lambda wrapping boilerplate
-- Still creates a new trainer instance for each optimizer
-- Less clean than Option 2 for many optimizer experiments
-
-**When to use:** When you need both speed and flexibility for testing a few
-different optimizers.
-
-##### **Option 2: Optimizer in Carry State** (✅ **Recommended**)
-
-Pack the optimizer into the carry state tuple alongside model, opt_state, and
-key:
+`eqx.is_array` makes _every_ array trainable. To freeze a submodule, build the
+filter spec by hand and zero out that subtree — frozen arrays then land in the
+static half of the partition, where the optimizer never sees them and `scan`
+carries them as constants.
 
 ```python
-class NNTrainer(AbstractScanNNTrainer):
-    def init(self, *, key, X, y, learning_rate=1e-2):
-        """Initialize model, optimizer, and training data."""
+class Encoder(eqx.Module):
+    mlp: eqx.nn.MLP
+
+    def __init__(self, key):
+        self.mlp = eqx.nn.MLP(2, 4, 8, 1, activation=jax.nn.relu, key=key)
+
+    def __call__(self, x):
+        return self.mlp(x)
+
+
+class AutoEncoder(eqx.Module):
+    encoder: Encoder
+    decoder: eqx.nn.MLP
+
+    def __init__(self, key):
+        ekey, dkey = jr.split(key)
+        self.encoder = Encoder(ekey)
+        self.decoder = eqx.nn.MLP(4, 1, 8, 1, activation=jax.nn.relu, key=dkey)
+
+    def __call__(self, x):
+        return self.decoder(self.encoder(x))
+
+
+def trainable_spec(model):
+    """Every array is trainable EXCEPT those under `.encoder`."""
+    spec = jax.tree_util.tree_map(eqx.is_array, model)
+    frozen = jax.tree_util.tree_map(lambda _: False, model.encoder)
+    return eqx.tree_at(lambda m: m.encoder, spec, frozen)
+
+
+class FrozenEncoderTrainer(AbstractScanNNTrainer):
+    def init(self, *, key, X, y):
         model_key, data_key = jr.split(key)
-        model = eqx.nn.MLP(...)
+        model = AutoEncoder(model_key)
+        # Initialize the optimizer on the TRAINABLE leaves only, so its state
+        # matches the gradients make_step will hand it.
+        trainable, _ = eqx.partition(model, trainable_spec(model))
+        opt_state = optax.adam(1e-2).init(trainable)
+        return (model, opt_state, jr.fold_in(data_key, 0)), (
+            jnp.ones(len(X), dtype=bool),
+            (X, y),
+        )
 
-        # Create optimizer instance
-        optimizer = optax.adam(learning_rate)
+    def pack_carry_state(self, carry):
+        model, opt_state, key = carry
+        model_dyn, model_static = eqx.partition(model, trainable_spec(model))
+        return (model_dyn, opt_state, key), {"model_static": model_static}
+
+    def unpack_carry_state(self, carry, static):
+        model_dyn, opt_state, key = carry
+        return (eqx.combine(model_dyn, static["model_static"]), opt_state, key)
+
+
+def make_step_frozen(carry, batch_inputs):
+    model, opt_state, key = carry
+    batch_mask, (X_batch, y_batch) = batch_inputs
+
+    # Differentiate w.r.t. the trainable half only. Grading the whole model
+    # would produce encoder gradients that opt_state has no slot for.
+    trainable, frozen = eqx.partition(model, trainable_spec(model))
+
+    def loss_fn(t):
+        preds = jax.vmap(eqx.combine(t, frozen))(X_batch).squeeze(-1)
+        return masked_mean((preds - y_batch) ** 2, batch_mask)
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(trainable)
+    updates, opt_state = optimizer.update(grads, opt_state)
+    trainable = eqx.apply_updates(trainable, updates)
+    return loss, (eqx.combine(trainable, frozen), opt_state, key)
+
+
+trainer = FrozenEncoderTrainer(make_step=make_step_frozen, loss_agg_fn=masked_mean)
+carry, epoch_data = trainer.init(key=key, X=X, y=y)
+before = carry[0]
+final_carry, losses = trainer.run(
+    carry, epoch_data, num_epochs=10, batch_size=16, key=key
+)
+after = final_carry[0]
+
+# The encoder came out bit-for-bit unchanged; the decoder trained.
+enc_b = jax.tree_util.tree_leaves(eqx.filter(before.encoder, eqx.is_array))
+enc_a = jax.tree_util.tree_leaves(eqx.filter(after.encoder, eqx.is_array))
+assert all(jnp.array_equal(b, a) for b, a in zip(enc_b, enc_a))
+assert losses[-1] < losses[0]
+```
+
+#### Optimizer Passing Strategies
+
+`make_step` needs the optimizer, but `make_step` is just a function you hand to
+the constructor — so how does it get one? There are three patterns. Every block
+below runs.
+
+They perform the same. Pick on clarity, not speed: the optimizer plumbing is
+noise next to the forward/backward pass, and the differences we measured were
+within run-to-run variance. **If you don't want to think about it, use
+Option 2.**
+
+##### Option 1: Optimizer in a closure
+
+The simplest thing that works. `make_step` closes over an optimizer defined
+outside it — this is what the example above does.
+
+```python
+optimizer_adam = optax.adam(1e-2)
+
+
+def make_step_closure(carry, batch_inputs):
+    model, opt_state, key = carry
+    batch_mask, (X_batch, y_batch) = batch_inputs
+
+    def loss_fn(m):
+        preds = jax.vmap(m)(X_batch).squeeze(-1)
+        return masked_mean((preds - y_batch) ** 2, batch_mask)
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
+    updates, opt_state = optimizer_adam.update(grads, opt_state)
+    return loss, (eqx.apply_updates(model, updates), opt_state, key)
+
+
+trainer = NNTrainer(make_step=make_step_closure, loss_agg_fn=masked_mean)
+carry, epoch_data = trainer.init(key=key, X=X, y=y)
+_, losses = trainer.run(carry, epoch_data, num_epochs=5, batch_size=16, key=key)
+assert losses[-1] < losses[0]
+```
+
+**Trade-off:** the optimizer is baked in. Swapping it means writing another
+`make_step`. Fine for a script with one optimizer; annoying for a sweep.
+
+**Use it when:** you have exactly one fixed optimizer.
+
+##### Option 2: Optimizer in the carry ✅ _recommended_
+
+Put the optimizer in the carry and stash it in the _static_ metadata during
+packing. An `optax.GradientTransformation` is a pair of functions, not arrays,
+so it belongs on the static side — the same reasoning as `eqx.partition`.
+
+```python
+class TrainerWithOptimizer(AbstractScanNNTrainer):
+    """Carries the optimizer as part of the training state."""
+
+    def init(self, *, key, X, y, optimizer):
+        model_key, data_key = jr.split(key)
+        model = eqx.nn.MLP(
+            in_size=X.shape[1],
+            out_size=1,
+            width_size=32,
+            depth=2,
+            activation=jax.nn.relu,
+            key=model_key,
+        )
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
-
-        # Carry now includes optimizer
-        initial_carry = (model, opt_state, optimizer, key)
-
-        mask = jnp.ones(len(X), dtype=bool)
-        epoch_data = (mask, (X, y))
-        return initial_carry, epoch_data
+        initial_carry = (model, opt_state, optimizer, jr.fold_in(data_key, 0))
+        return initial_carry, (jnp.ones(len(X), dtype=bool), (X, y))
 
     def pack_carry_state(self, carry):
         model, opt_state, optimizer, key = carry
         model_dyn, model_static = eqx.partition(model, eqx.is_array)
+        # The optimizer is functions, not arrays -> static side.
         return (
             (model_dyn, opt_state, key),
             {"model_static": model_static, "optimizer": optimizer},
@@ -595,128 +753,86 @@ class NNTrainer(AbstractScanNNTrainer):
     def unpack_carry_state(self, carry, static):
         model_dyn, opt_state, key = carry
         model = eqx.combine(model_dyn, static["model_static"])
-        optimizer = static["optimizer"]
-        return (model, opt_state, optimizer, key)
+        return (model, opt_state, static["optimizer"], key)
 
 
-def make_step(carry, batch_inputs):
+def make_step_carry(carry, batch_inputs):
     model, opt_state, optimizer, key = carry  # optimizer is explicit
-    # ... loss computation ...
-    updates, opt_state = optimizer.update(grads, opt_state)
-    return loss, (model, opt_state, optimizer, key)
+    batch_mask, (X_batch, y_batch) = batch_inputs
+
+    def loss_fn(m):
+        preds = jax.vmap(m)(X_batch).squeeze(-1)
+        return masked_mean((preds - y_batch) ** 2, batch_mask)
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
+    # Pass `params` too: optimizers like `adamw` need the current parameters
+    # (for decoupled weight decay). Optimizers that don't need them ignore them,
+    # so passing `params` always is the safe default.
+    params = eqx.filter(model, eqx.is_array)
+    updates, opt_state = optimizer.update(grads, opt_state, params)
+    return loss, (eqx.apply_updates(model, updates), opt_state, optimizer, key)
 
 
-trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
+# One trainer, any optimizer -- only `init()` changes.
+trainer = TrainerWithOptimizer(make_step=make_step_carry, loss_agg_fn=masked_mean)
+
+for opt in [optax.adam(1e-2), optax.sgd(1e-2), optax.adamw(1e-2)]:
+    carry, epoch_data = trainer.init(key=key, X=X, y=y, optimizer=opt)
+    _, losses = trainer.run(carry, epoch_data, num_epochs=5, batch_size=16, key=key)
+    assert losses[-1] < losses[0]
 ```
 
-**Pros:**
+**Trade-off:** a slightly bigger carry and explicit packing logic.
 
-- ✅ **Trainer can be reused with different optimizers**
-- Optimizer is explicit and visible in training state
-- No need to create new `make_step` functions
-- Very flexible for hyperparameter searches
+**Use it when:** production code, hyperparameter sweeps, reusable trainers —
+i.e. most of the time.
 
-**Cons:**
+##### Option 3: Optimizer via `step_kw`
 
-- Slightly larger carry tuple
-- Must implement explicit packing/unpacking logic
-
-**When to use:** Production code, hyperparameter sweeps, reusable trainer
-implementations.
-
-**Flexibility example:**
+`run(step_kw=...)` forwards keyword arguments to `make_step` on every batch.
+This keeps the optimizer out of the training state and treats it as
+configuration.
 
 ```python
-# Same trainer works with any optimizer!
-trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
-
-# Try Adam
-carry_adam = trainer.init(key=key, X=X, y=y, learning_rate=1e-2)
-final, losses = trainer.run(carry_adam, epoch_data, num_epochs=10, ...)
-
-# Try SGD with same trainer (no new make_step needed!)
-carry_sgd = trainer.init(key=key, X=X, y=y, learning_rate=1e-3)
-final, losses = trainer.run(carry_sgd, epoch_data, num_epochs=10, ...)
-# ^^ Only init() changes, not the trainer
-```
-
-##### **Option 3: Optimizer via `step_kw` Parameter**
-
-Pass the optimizer as a keyword argument via the `step_kw` parameter in
-`trainer.run()`:
-
-```python
-def make_step(carry, batch_inputs, *, optimizer):  # optimizer as kwarg
+def make_step_kw(carry, batch_inputs, *, optimizer):
     model, opt_state, key = carry
-    # ... loss computation ...
+    batch_mask, (X_batch, y_batch) = batch_inputs
+
+    def loss_fn(m):
+        preds = jax.vmap(m)(X_batch).squeeze(-1)
+        return masked_mean((preds - y_batch) ** 2, batch_mask)
+
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     updates, opt_state = optimizer.update(grads, opt_state)
-    return loss, (model, opt_state, key)
+    return loss, (eqx.apply_updates(model, updates), opt_state, key)
 
 
-optimizer = optax.adam(1e-2)
-trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
-carry, epoch_data = trainer.init(...)
-
-final_carry, losses = trainer.run(
+trainer = NNTrainer(make_step=make_step_kw, loss_agg_fn=masked_mean)
+carry, epoch_data = trainer.init(key=key, X=X, y=y)
+_, losses = trainer.run(
     carry,
     epoch_data,
-    num_epochs=10,
+    num_epochs=5,
     batch_size=16,
     key=key,
-    step_kw={"optimizer": optimizer},  # pass optimizer here
+    step_kw={"optimizer": optax.adam(1e-2)},  # <- forwarded to make_step
 )
+assert losses[-1] < losses[0]
 ```
 
-**Pros:**
+**Trade-off:** the optimizer isn't part of the training state, which is a little
+unusual for JAX training code. `step_kw` values are captured at trace time, so
+they must be static across the whole run — you can't schedule them per-epoch
+this way.
 
-- Clean separation of hyper-parameter config from carry state
-- Simple implementation
-- Works for any optimizer via `step_kw`
+**Use it when:** the optimizer is genuinely configuration rather than state.
 
-**Cons:**
+##### Summary
 
-- Optimizer not explicitly part of the training state
-- Less common pattern in JAX training code
+| Pattern        | Swap optimizers without a new `make_step`? | Optimizer visible in state? |
+| -------------- | ------------------------------------------ | --------------------------- |
+| 1: Closure     | ❌                                         | ❌                          |
+| 2: In carry ✅ | ✅                                         | ✅                          |
+| 3: `step_kw`   | ✅                                         | ❌                          |
 
-**When to use:** When you want optimizer as a configuration parameter rather
-than training state.
-
-##### **Recommendation: Use Option 2 (Optimizer in Carry)**
-
-**Option 2 is the recommended approach** for most use cases because:
-
-1. **Flexibility** — The same trainer works with any optimizer configuration
-2. **Explicitness** — Optimizer is a visible, integral part of training state
-3. **Reusability** — No need to re-create functions for different optimizers
-4. **Clarity** — Training state is complete and self-contained in carry
-5. **Performance** — Within 1% of the fastest option; differences are
-   **negligible**
-
-The extra complexity of packing/unpacking is minimal and well worth the
-flexibility gains.
-
-**Benchmark Results** (Multi-trial with warmup, 5 epochs, 128 samples,
-batch_size=16):
-
-| Option                       | Mean Time | Overhead           | Std Dev |
-| ---------------------------- | --------- | ------------------ | ------- |
-| **1: Direct Closure**        | 0.279s    | Baseline (fastest) | ±0.005s |
-| **2: Optimizer in Carry** ✅ | 0.282s    | +1.0%              | ±0.019s |
-| **3: step_kw**               | 0.287s    | +2.9%              | ±0.021s |
-| **1b: Lambda Wrapper**       | 0.294s    | +5.3%              | ±0.003s |
-
-**Key insight**: All strategies perform within ~5% of each other. Performance is
-**negligible** relative to actual training costs (forward/backward pass, data
-loading), so choose based on code clarity and maintainability, not speed.
-
-**When to choose each option:**
-
-- **Option 1 (bare closure)**: Quick scripts with exactly one fixed optimizer
-- **Option 1b (lambda wrapping)**: Flexible single-function approach; middle
-  ground between 1 and 3
-- **Option 3 (step_kw)**: Optimizer as pure hyperparameter, not training state
-- **Option 2 (Optimizer in Carry)** ✅ **Recommended**: Production code,
-  hyperparameter sweeps, reusable trainers
-
-See `tests/test_nn_trainer.py` for complete examples and benchmarks of all
-patterns.
+See `tests/usage/test_nn.py` for these patterns as end-to-end tests.

@@ -10,10 +10,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, TypeAlias, TypeVar
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Bool, PRNGKeyArray, Real, Shaped
+from jax import lax
+from jaxtyping import Array, ArrayLike, Bool, Integer, PRNGKeyArray, Real, Shaped
 
 from .optional_deps import OptDeps
 
@@ -25,6 +25,7 @@ OutputT = TypeVar("OutputT")  # Output type (e.g., loss)
 # Type aliases
 Sz0Like: TypeAlias = Shaped[ArrayLike, " "]  # noqa: F722
 RealSz0: TypeAlias = Real[Array, " "]  # noqa: F722
+IntSz0: TypeAlias = Integer[Array, " "]  # noqa: F722
 RealSzN: TypeAlias = Real[Array, " N"]  # noqa: F722
 RealSzB: TypeAlias = Real[Array, " B"]  # noqa: F722
 RealSzE: TypeAlias = Real[Array, " E"]  # noqa: F722
@@ -50,7 +51,23 @@ def masked_mean(arr: RealSzN, mask: BoolSzN) -> RealSz0:
     Returns
     -------
     mean : Array
-        Scalar mean value over masked elements.
+        Scalar mean value over masked elements. If `mask` is entirely False,
+        returns NaN.
+
+    Notes
+    -----
+    The division uses a "safe denominator" so that the empty-mask case is
+    differentiable. Writing the naive ``jnp.where(count > 0, total / count,
+    jnp.nan)`` evaluates ``total / count`` on *both* branches, so when ``count
+    == 0`` the unused branch computes ``0 / 0``; the VJP of `jnp.where` then
+    multiplies that branch's ``inf`` derivative by zero, yielding a NaN
+    gradient. Clamping the denominator to 1 before dividing keeps the forward
+    value identical (still NaN when the mask is empty) while making the
+    gradient well-defined (zero).
+
+    This matters in practice: `shuffle_and_batch` groups ignorable samples
+    together, so a batch can legitimately contain no usable samples at all, and
+    a mask-aware loss will then call this function with an all-False mask.
 
     Examples
     --------
@@ -61,13 +78,22 @@ def masked_mean(arr: RealSzN, mask: BoolSzN) -> RealSz0:
     >>> masked_mean(arr, mask)  # Mean of [1, 2, 4]
     Array(2.333..., dtype=float32)
 
+    An empty mask gives NaN, but a *finite* gradient:
+
+    >>> import jax
+    >>> empty = jnp.zeros(4, dtype=bool)
+    >>> masked_mean(arr, empty)
+    Array(nan, dtype=float32)
+    >>> jax.grad(masked_mean)(arr, empty)
+    Array([0., 0., 0., 0.], dtype=float32)
+
     """
     total = jnp.sum(arr * mask)
     count = jnp.sum(mask)
-    # When count == 0 (no True entries in mask), return NaN explicitly instead
-    # of 0/0.  This preserves previous behavior (NaN) while avoiding an explicit
-    # divide-by-zero.
-    return jnp.where(count > 0, total / count, jnp.nan)
+    # Clamp the denominator away from zero *before* dividing. See Notes: this
+    # keeps the empty-mask value at NaN while avoiding a NaN gradient.
+    safe_count = jnp.where(count > 0, count, 1)
+    return jnp.where(count > 0, total / safe_count, jnp.nan)
 
 
 def shuffle_and_batch(
@@ -95,7 +121,12 @@ def shuffle_and_batch(
     batch_size : int
         Desired batch size.
     pad_value : Sz0Like, optional
-        Value to use for padding the arrays. Default is 0.
+        Value to use for padding the arrays. Default is 0. The same value is
+        used for *every* array in ``*args``, so it must be a sane filler for all
+        of them. Padding rows are always False in ``combined_mask``, so a
+        mask-respecting loss never reads them -- but be aware that if `0` is a
+        meaningful value in one of your arrays (e.g. a class label), the padded
+        entries are indistinguishable from real ones by value alone.
 
     Returns
     -------
@@ -105,11 +136,23 @@ def shuffle_and_batch(
         Shuffled and batched arrays. Each has shape (n_batches, batch_size, ...).
         Usable data appears first, then ignorable data, with padding at the end.
 
+    Raises
+    ------
+    ValueError
+        If ``batch_size`` is not a positive int, or if any array in ``*args``
+        does not have the same leading dimension as ``mask``.
+
     Notes
     -----
     This function is useful for training loops where you want to include both
     real data and padding in batches, with a mask to track which samples are
     valid.
+
+    Because usable samples are sorted *first* and ignorable ones last, the
+    ignorable samples cluster together. A batch can therefore contain no usable
+    samples at all -- its row of ``combined_mask`` will be entirely False. Any
+    loss you compute must tolerate that case; see `masked_mean`.
+    `AbstractScanNNTrainer` skips such batches for you.
 
     Examples
     --------
@@ -129,6 +172,21 @@ def shuffle_and_batch(
 
     """
     N = len(mask)  # noqa: N806
+
+    if not isinstance(batch_size, int) or batch_size <= 0:  # type: ignore[redundant-expr]
+        msg = f"batch_size must be a positive int, got {batch_size!r}."
+        raise ValueError(msg)
+
+    # Catch the easy mistake of passing an array whose leading dim doesn't line
+    # up with the mask: without this the failure surfaces much later, as an
+    # opaque shape error from inside `jax.lax.scan`.
+    for i, arr in enumerate(args):
+        if arr.shape[0] != N:
+            msg = (
+                f"all arrays must share the mask's leading dimension "
+                f"(N={N}), but args[{i}] has shape {arr.shape}."
+            )
+            raise ValueError(msg)
 
     # Step 1: Sort so True comes first, False comes second
     sort_perm = jnp.argsort(~mask)
@@ -233,7 +291,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
     5. **Loss aggregation** (per epoch): aggregates batch losses into epoch
        loss via the provided `loss_agg_fn`
 
-    This pattern matches that used in phasecurvefit's OrderingNet trainer.
+    Note that `make_step` and `loss_agg_fn` are *constructor arguments*, not
+    methods to override: you pass them in when instantiating the trainer. Only
+    `pack_carry_state`, `unpack_carry_state`, and `init` are subclass hooks.
 
     """
 
@@ -265,20 +325,26 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         Notes
         -----
-        For Equinox models when using ``eqx.nn.MLP`` or other Equinox modules,
-        you may get an error about ``custom_jvp`` being passed through
-        `jax.lax.scan`. In such cases, use ``eqx.partition`` to separate dynamic
-        arrays from static structure.
+        For Equinox models such as ``eqx.nn.MLP``, passing the model straight
+        through `jax.lax.scan` raises an error about ``custom_jvp``. Use
+        ``eqx.partition`` to split the dynamic (array) leaves from the static
+        structure:
 
-        A common pattern is to use ``eqx.partition`` to separate dynamic (array)
-        and static parameters:
+        .. code-block:: python
 
-            filter_spec = eqx.is_array model_dynamic, model_static =
-            eqx.partition(model, filter_spec) return (model_dynamic, opt_state,
-            key), {"model_static": model_static}
+            def pack_carry_state(self, carry):
+                model, opt_state, key = carry
+                model_dynamic, model_static = eqx.partition(model, eqx.is_array)
+                return (model_dynamic, opt_state, key), {"model_static": model_static}
 
         This filters out non-array components (methods, activation functions,
         static configuration) that would otherwise break JAX's scan primitive.
+
+        The static metadata is captured once, from the *initial* carry, and
+        reused for every subsequent pack/unpack. The static structure must
+        therefore be invariant across training steps -- which holds for Equinox
+        models, whose partitioned structure does not change under gradient
+        updates.
 
         """
 
@@ -305,12 +371,15 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         Notes
         -----
-        This is the inverse of ``pack_carry_state``. Use ``eqx.combine`` to
-        reconstruct the full model from its partitioned components if:
+        This is the inverse of `pack_carry_state`. Use ``eqx.combine`` to
+        reconstruct the full model from its partitioned components:
 
-            model_dynamic, opt_state, key = carry model_static =
-            static["model_static"] model = eqx.combine(model_dynamic,
-            model_static) return (model, opt_state, key)
+        .. code-block:: python
+
+            def unpack_carry_state(self, carry, static):
+                model_dynamic, opt_state, key = carry
+                model = eqx.combine(model_dynamic, static["model_static"])
+                return (model, opt_state, key)
 
         Without proper unpacking, the model will remain in its partitioned state
         and cannot be used for inference or further training.
@@ -367,14 +436,24 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         """
 
     def prepare_data_args(
-        self, carry: CarryT, data_args: tuple[Any, ...], /, *, epoch_key: PRNGKeyArray
+        self,
+        carry: CarryT,
+        data_args: tuple[Any, ...],
+        /,
+        *,
+        epoch_idx: IntSz0,
+        num_epochs: int,
+        epoch_key: PRNGKeyArray,
     ) -> tuple[Any, ...]:
-        r"""Prepare per-epoch data arguments before batching.
+        r"""Prepare per-epoch *data* before batching.
 
-        This hook is called once per epoch, immediately before
-        `shuffle_and_batch`.  Subclasses can override it to generate or modify
-        inputs that are fed to `make_step`, such as random negatives sampled
-        from epoch-specific RNG.
+        Called once per epoch, immediately before `shuffle_and_batch`. Override
+        it to generate or modify the arrays fed to `make_step` -- for example to
+        resample random negatives from fresh per-epoch RNG.
+
+        Anything returned here is passed through `shuffle_and_batch`, so every
+        element must have leading dimension ``N`` (matching ``mask``). To vary a
+        *scalar* hyperparameter across epochs, use `prepare_step_kw` instead.
 
         The default implementation is a no-op that returns `data_args` unchanged.
 
@@ -384,17 +463,92 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             Current training carry for the epoch.
         data_args : tuple[Any, ...]
             Data arguments provided via `epoch_data`.
+        epoch_idx : Array
+            Index of the current epoch, as a traced scalar in ``[0, num_epochs)``.
+        num_epochs : int
+            Total number of epochs. A static Python int, so it is safe to use in
+            Python-level arithmetic and control flow.
         epoch_key : PRNGKeyArray
             RNG key for this epoch.
 
         Returns
         -------
         tuple[Any, ...]
-            Data arguments to pass to `shuffle_and_batch`.
+            Data arguments to pass to `shuffle_and_batch`. Each must have
+            leading dimension ``N``.
+
+        Examples
+        --------
+        Resample uniform "negative" samples every epoch:
+
+        .. code-block:: python
+
+            class MyTrainer(AbstractScanNNTrainer):
+                def prepare_data_args(self, carry, data_args, /, *, epoch_key, **kw):
+                    (positives,) = data_args
+                    negatives = jr.uniform(epoch_key, shape=positives.shape)
+                    return (positives, negatives)
 
         """
-        _ = (carry, epoch_key)
+        _ = (carry, epoch_idx, num_epochs, epoch_key)
         return data_args
+
+    def prepare_step_kw(
+        self,
+        /,
+        *,
+        epoch_idx: IntSz0,
+        num_epochs: int,
+        epoch_key: PRNGKeyArray,
+    ) -> Mapping[str, Any]:
+        r"""Prepare per-epoch *keyword arguments* for `make_step`.
+
+        Called once per epoch. Whatever mapping this returns is merged into the
+        ``step_kw`` passed to `run`, and forwarded to `make_step` on every batch
+        of that epoch. Keys returned here take precedence over ``step_kw``.
+
+        This is the hook for hyperparameters that vary across training: loss-term
+        weights, temperature annealing, curriculum thresholds, and similar. The
+        returned values may be traced arrays -- they are closed over by the batch
+        scan, so they reach `make_step` as ordinary runtime values.
+
+        Use `prepare_data_args` instead for anything with a leading ``N``
+        dimension that needs shuffling and batching.
+
+        The default implementation returns an empty mapping.
+
+        Parameters
+        ----------
+        epoch_idx : Array
+            Index of the current epoch, as a traced scalar in ``[0, num_epochs)``.
+        num_epochs : int
+            Total number of epochs. A static Python int, so ``num_epochs - 1``
+            and similar are ordinary Python arithmetic.
+        epoch_key : PRNGKeyArray
+            RNG key for this epoch.
+
+        Returns
+        -------
+        Mapping[str, Any]
+            Extra keyword arguments for `make_step` during this epoch.
+
+        Examples
+        --------
+        Linearly ramp a loss weight from ``lam_min`` to ``lam_max`` over training:
+
+        .. code-block:: python
+
+            def prepare_step_kw(self, /, *, epoch_idx, num_epochs, epoch_key):
+                frac = epoch_idx / (num_epochs - 1) if num_epochs > 1 else 0.0
+                return {"lam": lam_min + (lam_max - lam_min) * frac}
+
+        `make_step` then receives it as a keyword argument::
+
+            def make_step(carry, batch_inputs, *, lam): ...
+
+        """
+        _ = (epoch_idx, num_epochs, epoch_key)
+        return {}
 
     def run(
         self,
@@ -406,7 +560,7 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         batch_size: int,
         key: PRNGKeyArray,
         step_kw: Mapping[str, Any] | None = None,
-        show_pbar: bool = True,
+        show_pbar: bool = False,
     ) -> tuple[CarryT, RealSzE]:
         r"""Run the training loop over epochs with efficient batching and scanning.
 
@@ -420,8 +574,6 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         4. **Per-batch training step**: calls `self.make_step` on each batch
         5. **Loss aggregation** (per epoch): aggregates batch losses into epoch
            loss via `loss_agg_fn`
-
-        This matches the pattern used in phasecurvefit's OrderingNet trainer.
 
         Parameters
         ----------
@@ -448,7 +600,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             Keyword arguments forwarded to `self.make_step` on every batch.
             Defaults to None.
         show_pbar : bool, optional
-            If True, show a progress bar over epochs via jax_tqdm. Default: True.
+            If True, show a progress bar over epochs via ``jax_tqdm``. Default:
+            False. ``jax_tqdm`` is an optional dependency, so this must be opted
+            into: install it with the ``tqdm`` extra (e.g. ``pip install
+            'jaxmore[tqdm]'``). Passing True without it raises `ImportError`.
 
         Returns
         -------
@@ -470,22 +625,43 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         - `init(**kwargs) -> (initial_carry, epoch_data)`: Initialize training
           state and data.
-        - `make_step(carry, batch_inputs, **kwargs) -> (loss, new_carry)`:
-          Executes one training step on a batch. The `batch_inputs` has format
-          ``(batch_mask, (data_arg1, data_arg2, ...))``. If the carry contains
-          an RNG key that needs to be used in `make_step`, then `make_step` is
-          responsible for splitting it and returning the updated key in the new
-          carry.
         - `pack_carry_state(carry) -> (packed_carry, static_meta)`: Prepares
           carry for scanning.
         - `unpack_carry_state(packed_carry, static_meta) -> carry`: Reconstructs
           carry after scanning.
 
-        Subclasses may override:
+        Passed to the constructor (not overridden):
 
-        - `prepare_data_args(carry, data_args, epoch_key=...) -> tuple[Any,
-          ...]`: Optional per-epoch hook to transform or augment `data_args`
-          before batching. Default is a no-op.
+        - `make_step(carry, batch_inputs, **kwargs) -> (loss, new_carry)`:
+          Executes one training step on a batch. `batch_inputs` has the format
+          ``(batch_mask, (data_arg1, data_arg2, ...))``, where ``batch_mask``
+          marks which rows of the batch are real, usable samples. **Your loss
+          should respect ``batch_mask``** -- batches are zero-padded to a
+          constant shape, and an unmasked loss will train on that padding. See
+          `masked_mean`. If the carry contains an RNG key that `make_step` needs
+          to use, `make_step` is responsible for splitting it and returning the
+          updated key in the new carry.
+        - `loss_agg_fn(losses, batch_has_data) -> epoch_loss`: Aggregates the
+          per-batch losses into a single epoch loss.
+
+        Batches with no usable samples are skipped entirely (via `jax.lax.cond`)
+        and contribute nothing to `epoch_losses`.
+
+        Subclasses may override two optional per-epoch hooks, both of which
+        receive ``epoch_idx`` (a traced scalar), ``num_epochs`` (a static int),
+        and ``epoch_key``:
+
+        - `prepare_data_args(carry, data_args, ...) -> tuple[Any, ...]`:
+          transform or augment the *data* before batching, e.g. resampling
+          random negatives each epoch. Whatever it returns goes through
+          `shuffle_and_batch`, so every element needs leading dimension ``N``.
+        - `prepare_step_kw(...) -> Mapping[str, Any]`: supply per-epoch *keyword
+          arguments* for `make_step`, merged over ``step_kw``. This is how you
+          schedule a scalar across training -- a ramped loss weight, an annealed
+          temperature, a curriculum threshold. Use it rather than
+          `prepare_data_args` for anything that isn't an ``N``-length array.
+
+        Both default to no-ops, and are skipped entirely when not overridden.
 
         The carry is packed and unpacked around each epoch to isolate the
         trainable parameters from static structure, enabling efficient scanning.
@@ -535,14 +711,17 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         ...         model = eqx.combine(model_dyn, model_static)
         ...         return (model, opt_state, key)
 
+        Note how `make_step` uses ``batch_mask``: batches are zero-padded to a
+        constant shape, so an unmasked loss would train on the padding.
+
         >>> optimizer = optax.adam(1e-3)
         >>> def make_step(carry, batch_inputs, **kw):
         ...     model, opt_state, key = carry
         ...     batch_mask, (X_batch, y_batch) = batch_inputs
         ...     def loss_fn(model):
-        ...         preds = jax.vmap(model)(X_batch)
-        ...         mse = jnp.mean((preds - y_batch[:, None]) ** 2)
-        ...         return mse
+        ...         preds = jax.vmap(model)(X_batch).squeeze(-1)
+        ...         # Average the squared error over *real* rows only.
+        ...         return masked_mean((preds - y_batch) ** 2, batch_mask)
         ...     loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
         ...     updates, opt_state = optimizer.update(grads, opt_state)
         ...     model = eqx.apply_updates(model, updates)
@@ -553,10 +732,15 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         >>> y = 2*X[:,0] + X[:,1] + jr.normal(jr.fold_in(key, 1), (20,))
         >>> carry, epoch_data = trainer.init(key=key, X=X, y=y, learning_rate=1e-2)
         >>> final_carry, losses = trainer.run(
-        ...     carry, epoch_data, num_epochs=5, batch_size=4, key=key, show_pbar=False
+        ...     carry, epoch_data, num_epochs=5, batch_size=4, key=key
         ... )
-        >>> print(losses.shape)
+        >>> losses.shape
         (5,)
+
+        Training reduced the loss, and no NaNs leaked in from padded rows:
+
+        >>> bool(losses[-1] < losses[0]), bool(jnp.isfinite(losses).all())
+        (True, True)
 
         """
         if step_kw is None:
@@ -571,22 +755,52 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         # Generate epoch-level random keys
         epoch_keys = jr.split(key, num_epochs)
 
+        # Both per-epoch hooks are opt-in. When `prepare_data_args` is not
+        # overridden it is a no-op, so the unpack/repack round-trip needed to
+        # call it is pure overhead -- skip it entirely in that (common) case.
+        cls = type(self)
+        hooks_data_args = (
+            cls.prepare_data_args is not AbstractScanNNTrainer.prepare_data_args
+        )
+        hooks_step_kw = cls.prepare_step_kw is not AbstractScanNNTrainer.prepare_step_kw
+
         # -------- Epoch scan function --------
 
         def epoch_scan_fn(
-            packed_carry: PackedCarry, epoch_input: tuple[Any, PRNGKeyArray]
+            packed_carry: PackedCarry, epoch_input: tuple[IntSz0, PRNGKeyArray]
         ) -> tuple[PackedCarry, RealSz0]:
             """Run one epoch: shuffle, batch, then scan over batches."""
-            # Unpack epoch input
-            _, epoch_key = epoch_input
+            epoch_idx, epoch_key = epoch_input
 
-            # Temporarily unpack carry for prepare_data_args
-            carry = self.unpack_carry_state(packed_carry, carry_static)
-            epoch_data_args = self.prepare_data_args(
-                carry, data_args, epoch_key=epoch_key
-            )
-            # Repack immediately - we don't keep unpacked carry around
-            packed_carry, _ = self.pack_carry_state(carry)
+            if hooks_data_args:
+                # Temporarily unpack carry for prepare_data_args, then repack
+                # immediately -- we don't keep the unpacked carry around.
+                carry = self.unpack_carry_state(packed_carry, carry_static)
+                epoch_data_args = self.prepare_data_args(
+                    carry,
+                    data_args,
+                    epoch_idx=epoch_idx,
+                    num_epochs=num_epochs,
+                    epoch_key=epoch_key,
+                )
+                packed_carry, _ = self.pack_carry_state(carry)
+            else:
+                epoch_data_args = data_args
+
+            # Per-epoch keyword arguments for `make_step`. Values may be traced
+            # (e.g. a schedule computed from `epoch_idx`); the batch scan below
+            # closes over them, which is fine -- they arrive at `make_step` as
+            # ordinary runtime values. Hook keys win over the static `step_kw`.
+            epoch_step_kw: Mapping[str, Any] = step_kw
+            if hooks_step_kw:
+                epoch_step_kw = {
+                    **step_kw,
+                    **self.prepare_step_kw(
+                        epoch_idx=epoch_idx,
+                        num_epochs=num_epochs,
+                        epoch_key=epoch_key,
+                    ),
+                }
 
             # Shuffle and batch all data for this epoch
             batch_mask, batched_data = shuffle_and_batch(
@@ -595,65 +809,81 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             # batched_data is a tuple of batched arrays, each shape (n_batches,
             # batch_size, ...)
 
-            # Prepare batch inputs: (batch_mask, *batched_data)
-            batch_inputs = (batch_mask, *batched_data)
+            def batch_scan_fn(
+                packed: PackedCarry, batch_inputs: tuple[Array, ...]
+            ) -> tuple[PackedCarry, RealSz0]:
+                """Execute one training step on a batch, skipping empty batches.
+
+                `shuffle_and_batch` sorts usable samples first and ignorable ones
+                last, so trailing batches may contain no usable samples at all.
+                We guard `make_step` behind a `lax.cond` on ``any(batch_mask)``
+                so that such batches neither consume a forward/backward pass nor
+                contribute a (NaN) loss.
+                """
+                batch_mask_i = batch_inputs[0]
+                batch_data = batch_inputs[1:]
+
+                def run_step(p: PackedCarry) -> tuple[PackedCarry, RealSz0]:
+                    # Unpack carry for the user's make_step
+                    carry = self.unpack_carry_state(p, carry_static)
+                    loss, carry = self.make_step(
+                        carry, (batch_mask_i, batch_data), **epoch_step_kw
+                    )
+                    # Pack carry before returning to scan
+                    new_packed, _ = self.pack_carry_state(carry)
+                    return new_packed, jnp.asarray(loss, dtype=float)
+
+                def skip_step(p: PackedCarry) -> tuple[PackedCarry, RealSz0]:
+                    # Empty batch: leave the carry untouched and emit a 0.0 loss.
+                    # The loss is masked out of the epoch aggregate by
+                    # `batch_has_data` below, so its value is never used -- but it
+                    # must be finite, since NaN would propagate through `where`.
+                    return p, jnp.asarray(0.0)
+
+                return lax.cond(  # type: ignore[no-any-return]
+                    jnp.any(batch_mask_i), run_step, skip_step, packed
+                )
 
             # Scan over batches - carry stays PACKED throughout
-            packed_carry, batch_losses = jax.lax.scan(
+            batch_inputs = (batch_mask, *batched_data)
+            packed_carry, batch_losses = lax.scan(
                 batch_scan_fn, packed_carry, batch_inputs
             )
 
-            # Aggregate batch losses into epoch loss using loss_agg_fn
-            # batch_losses shape: (n_batches,), batch_mask shape: (n_batches,
-            # batch_size) We need a per-batch mask indicating which batches have
-            # real data
+            # Aggregate batch losses into the epoch loss. `batch_has_data` marks
+            # which batches actually ran, so skipped batches are excluded rather
+            # than diluting the average with their placeholder 0.0.
             batch_has_data = jnp.any(batch_mask, axis=1)  # shape: (n_batches,)
             epoch_loss = self.loss_agg_fn(batch_losses, batch_has_data)
 
             return packed_carry, epoch_loss
 
-        # -------- Batch scan functions --------
-
-        def batch_scan_fn(
-            packed_carry: PackedCarry, batch_inputs: tuple[Array, ...]
-        ) -> tuple[PackedCarry, RealSz0]:
-            """Execute one training step on a batch."""
-            # Unpack carry for user's make_step
-            carry = self.unpack_carry_state(packed_carry, carry_static)
-
-            batch_mask = batch_inputs[0]
-            batch_data = batch_inputs[1:]
-
-            # Call user's make_step with batch inputs
-            loss, carry = self.make_step(carry, (batch_mask, batch_data), **step_kw)
-
-            # Pack carry before returning to scan
-            packed_carry, _ = self.pack_carry_state(carry)
-
-            return packed_carry, loss
-
         # -------- Run training --------
 
-        # Optionally wrap with progress bar
+        # Optionally wrap with a progress bar. `jax_tqdm` is an optional extra,
+        # so this is opt-in: `show_pbar` defaults to False and a bare install
+        # never reaches this branch.
+        scan_fn: Any = epoch_scan_fn
         if show_pbar:
             if not OptDeps.JAX_TQDM.installed:
                 msg = (
-                    "jax_tqdm is required for progress bar support. "
-                    "Install it, e.g. with `uv add jaxmore --extra tqdm`."
+                    "jax_tqdm is required for progress bar support (show_pbar=True). "
+                    "Install it with the 'tqdm' extra, e.g. "
+                    "`pip install 'jaxmore[tqdm]'` or `uv add jaxmore --extra tqdm`."
                 )
                 raise ImportError(msg)
-            import jax_tqdm  # type: ignore[import-not-found]  # noqa: PLC0415
+            # Imported lazily: it is an optional dependency.
+            import jax_tqdm  # type: ignore[import-not-found,unused-ignore]  # noqa: PLC0415
 
-            epoch_scan_fn = jax_tqdm.scan_tqdm(
+            scan_fn = jax_tqdm.scan_tqdm(  # type: ignore[attr-defined,unused-ignore]
                 num_epochs, desc="Training", unit="epoch", dynamic_ncols=True
             )(epoch_scan_fn)
 
-        # Run scan over epochs
+        # Run scan over epochs. `jax_tqdm.scan_tqdm` requires the scanned `xs` to
+        # carry the epoch index as its first element, hence `epoch_indices`.
         epoch_indices = jnp.arange(num_epochs)
         epoch_inputs = (epoch_indices, epoch_keys)
-        packed_final_carry, epoch_losses = jax.lax.scan(
-            epoch_scan_fn, packed_carry, epoch_inputs
-        )
+        packed_final_carry, epoch_losses = lax.scan(scan_fn, packed_carry, epoch_inputs)
 
         # Unpack the final carry
         final_carry = self.unpack_carry_state(packed_final_carry, carry_static)

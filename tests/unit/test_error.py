@@ -4,13 +4,14 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from jaxmore._src import error_if
+from jaxmore import error_if
 
 
 def test_error_if_no_error_when_false() -> None:
     """error_if returns value unchanged when condition is False."""
     x = jnp.array(5)
-    result = error_if(x, jnp.array(False), "should not raise")
+    false = jnp.asarray(False)  # noqa: FBT003
+    result = error_if(x, false, "should not raise")
     assert jnp.array_equal(result, x)
 
 
@@ -18,8 +19,9 @@ def test_error_if_raises_when_true() -> None:
     """error_if raises JaxRuntimeError when condition is True."""
     x = jnp.array(5)
     msg = "test error message"
+    true = jnp.asarray(True)  # noqa: FBT003
     with pytest.raises(jax.errors.JaxRuntimeError, match=msg):
-        error_if(x, jnp.array(True), msg)
+        error_if(x, true, msg)
 
 
 def test_error_if_under_jit_no_error() -> None:
@@ -95,9 +97,8 @@ def test_error_if_pytree_carry() -> None:
 
     @jax.jit
     def f(state):
-        x, y = state
-        checked_state = error_if(state, x > 10, "x exceeds 10")
-        return checked_state
+        x, _y = state
+        return error_if(state, x > 10, "x exceeds 10")
 
     result = f((jnp.array(5), jnp.array(3)))
     assert jnp.array_equal(result[0], jnp.array(5))
@@ -109,9 +110,8 @@ def test_error_if_pytree_carry_with_error() -> None:
 
     @jax.jit
     def f(state):
-        x, y = state
-        checked_state = error_if(state, x > 10, "x exceeds 10")
-        return checked_state
+        x, _y = state
+        return error_if(state, x > 10, "x exceeds 10")
 
     msg = "x exceeds 10"
     with pytest.raises(jax.errors.JaxRuntimeError, match=msg):
@@ -124,8 +124,7 @@ def test_error_if_multiple_calls_in_jit() -> None:
     @jax.jit
     def f(x):
         x = error_if(x, x < 0, "x must be non-negative")
-        x = error_if(x, x > 100, "x must be <= 100")
-        return x
+        return error_if(x, x > 100, "x must be <= 100")
 
     # Should pass both checks
     result = f(jnp.array(50))

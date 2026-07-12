@@ -13,7 +13,7 @@ from .optional_deps import OptDeps
 
 # Conditionally import equinox.error_if if available, otherwise use internal
 if OptDeps.EQUINOX.installed:
-    import equinox as eqx  # type: ignore[import-not-found]
+    import equinox as eqx  # type: ignore[import-not-found,unused-ignore]
 
     _error_if = eqx.error_if
 else:
@@ -155,7 +155,7 @@ def bounded_while_loop(
       - Multiple modes: ``EQX_ON_ERROR`` environment variable controls behavior
         (raise, breakpoint, nan, warn, off)
 
-    - **Without equinox** (fallback): Uses internal and ``error_if`` which:
+    - **Without equinox** (fallback): Uses the internal ``error_if``, which:
 
       - Always executes: Uses ``jax.debug.callback`` (not subject to DCE)
       - CPU overhead: The callback executes on CPU with small host overhead

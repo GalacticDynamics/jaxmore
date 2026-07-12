@@ -315,7 +315,7 @@ class TestEdgeCases:
 
     def test_high_dimensional_input(self) -> None:
         """Vmapping over rank-3 tensors."""
-        vf = vmap(lambda x: jnp.sum(x))
+        vf = vmap(jnp.sum)
         x = jnp.ones((4, 3, 2))
         result = vf(x)
         expected = jnp.ones(4) * 6
