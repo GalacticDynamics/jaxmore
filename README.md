@@ -224,8 +224,8 @@ def init(x, *, cfg):
 print(init(5, cfg={"name": "test"}))  # (True, 5)
 ```
 
-**VAR_KEYWORD
-(`**kwargs`)** — a single processor is applied to every value in `\*\*kwargs`:
+**VAR_KEYWORD (`**kwargs`)** — a single processor is applied to every value in
+`\*\*kwargs`:
 
 ```python
 from jaxmore import structured
