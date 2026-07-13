@@ -5,10 +5,19 @@ __all__ = ("bounded_while_loop",)
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import lax
+
+from .optional_deps import OptDeps
+
+# Conditionally import equinox.error_if if available, otherwise use internal
+if OptDeps.EQUINOX.installed:
+    import equinox as eqx  # type: ignore[import-not-found,unused-ignore]
+
+    _error_if = eqx.error_if
+else:
+    from .error import error_if as _error_if
 
 # A (very) general PyTree type: any nested structure of JAX arrays/pytrees.
 T = TypeVar("T")
@@ -21,6 +30,7 @@ def bounded_while_loop(
     init_val: T,
     *,
     max_steps: int,
+    check_termination: bool = True,
 ) -> T:
     r"""Reverse-mode-friendly, bounded `while_loop` implemented via `lax.scan`.
 
@@ -46,7 +56,7 @@ def bounded_while_loop(
        length required by `scan` *without* performing unnecessary computation.
 
     If the user condition is still `True` after `max_steps` iterations (i.e. the
-    loop would continue), an error is raised using `equinox.error_if`.
+    loop would continue), an error is raised by default.
 
     Parameters
     ----------
@@ -60,13 +70,52 @@ def bounded_while_loop(
         Initial loop carry (any PyTree of JAX arrays / scalars / nested containers).
     max_steps
         Maximum number of iterations to attempt. Must be a non-negative Python int.
+    check_termination
+        Whether to validate after the scan that the loop terminated before `max_steps`.
+
+        - If ``True`` (default), validates termination.
+          When ``equinox`` is installed, uses ``equinox.error_if`` for better
+          error handling (dead code elimination support, TPU compatibility,
+          debugger modes). Otherwise, falls back to an internal ``error_if``
+          implementation that uses `jax.debug.callback`.
+        - If ``False``, this post-check is skipped and the function returns the
+          carry after exactly `max_steps` scan steps.
 
     Returns
     -------
     T
         Final carry value, either when `cond_fn` first returns `False`, or (if
-        that never happens) after `max_steps` iterations (but in that case an
-        error is raised).
+        that never happens) after `max_steps` iterations.
+
+        Note that the second case is only *returned* when
+        ``check_termination=False``. With the default ``check_termination=True``,
+        exhausting `max_steps` while `cond_fn` is still `True` raises instead of
+        returning -- see Raises.
+
+    Raises
+    ------
+    ValueError
+        If `max_steps` is not a non-negative Python int. Raised eagerly, at trace
+        time.
+    RuntimeError
+        If ``check_termination=True`` (the default) and `cond_fn` never became
+        `False` within `max_steps` iterations -- i.e. the bounded loop
+        "overflowed". Raised at *runtime*, after the scan. Pass
+        ``check_termination=False`` to return the truncated carry instead.
+
+        The concrete type depends on which backend supplies the check, so catch
+        `RuntimeError` (their common base) rather than either subclass:
+
+        - with ``equinox`` installed: `equinox.EquinoxRuntimeError`, and the
+          message is prefixed with Equinox's JIT stack-trace preamble. Its
+          behaviour is further configurable via the ``EQX_ON_ERROR``
+          environment variable.
+        - without ``equinox``: `jax.errors.JaxRuntimeError`, whose message is
+          exactly the text below.
+
+        In both cases the message contains
+        ``"bounded_while_loop exceeded max_steps without cond_fn becoming
+        False."``
 
     Examples
     --------
@@ -92,6 +141,27 @@ def bounded_while_loop(
     >>> bounded_while_loop(cond_fn, body_fn, (jnp.asarray(0), jnp.asarray(1)),
     ...                    max_steps=5)
     (Array(3, dtype=int32, ...), Array(8, dtype=int32, ...))
+
+    If `max_steps` is exhausted while `cond_fn` is still `True`, the loop has
+    "overflowed" and -- by default -- this is an error, not a silent truncation.
+    Catch `RuntimeError`: the exact subclass depends on whether ``equinox`` is
+    installed (see Raises).
+
+    >>> def cond_fn(x):
+    ...     return x < 100
+    >>> def body_fn(x):
+    ...     return x + 1
+    >>> try:
+    ...     bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3)
+    ... except RuntimeError as e:
+    ...     print("exceeded max_steps" in str(e))
+    True
+
+    Pass ``check_termination=False`` to opt out and take the truncated carry:
+
+    >>> bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=3,
+    ...                    check_termination=False)
+    Array(3, dtype=int32, ...)
 
     Notes
     -----
@@ -125,6 +195,24 @@ def bounded_while_loop(
     - `body_fn` and `cond_fn` are still traced/compiled as part of the JAX
       program (that is unavoidable), but they are not *executed* once
       `done=True`.
+
+    Error checking implementation:
+
+    - **With equinox** (if installed): Uses ``equinox.error_if`` which provides:
+
+      - Dead code elimination: Error check is optimized away if return value is
+        unused (you must assign the result for the check to execute)
+      - TPU compatibility: Handles TPU runtime's exception squelching
+      - Multiple modes: ``EQX_ON_ERROR`` environment variable controls behavior
+        (raise, breakpoint, nan, warn, off)
+
+    - **Without equinox** (fallback): Uses the internal ``error_if``, which:
+
+      - Always executes: Uses ``jax.debug.callback`` (not subject to DCE)
+      - CPU overhead: The callback executes on CPU with small host overhead
+
+    - **To disable**: Set ``check_termination=False`` to skip the check
+      entirely, regardless of which implementation is used.
 
     """
     if not isinstance(max_steps, int) or max_steps < 0:  # type: ignore[redundant-expr]
@@ -184,12 +272,14 @@ def bounded_while_loop(
         length=max_steps,
     )
 
-    # If final_done is False, then cond_fn never became False within max_steps,
-    # meaning the corresponding while-loop would still be continuing.
-    final_val = eqx.error_if(
+    # If final_done is False, then cond_fn never became False within
+    # max_steps, meaning the corresponding while-loop would still be
+    # continuing.
+    final_val = _error_if(
         final_val,
         jnp.logical_not(final_done),
         "bounded_while_loop exceeded max_steps without cond_fn becoming False.",
+        on_error="raise" if check_termination else "off",
     )
 
     return final_val  # noqa: RET504

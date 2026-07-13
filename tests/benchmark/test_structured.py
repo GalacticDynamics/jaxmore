@@ -100,4 +100,4 @@ def test_bench_pos_only_default_omitted(benchmark) -> None:
     # Warm up
     f()
 
-    benchmark(lambda: f())
+    benchmark(f)
