@@ -18,6 +18,8 @@ repos:
       - id: mixed-line-ending
       - id: name-tests-test
         args: ["--pytest-test-first"]
+      - id: no-commit-to-branch
+        args: ["--branch", "main", "--pattern", "^versions/.*"]
       - id: requirements-txt-fixer
       - id: trailing-whitespace
 
