@@ -20,6 +20,7 @@ repos:
         args: ["--pytest-test-first"]
       - id: no-commit-to-branch
         args: ["--branch", "main", "--pattern", "^versions/.*"]
+        always_run: true
       - id: requirements-txt-fixer
       - id: trailing-whitespace
 
