@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789505819317,
+  "lastUpdate": 1791067583250,
   "repoUrl": "https://github.com/GalacticDynamics/jaxmore",
   "entries": {
     "jaxmore Benchmarks": [
@@ -927,6 +927,142 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000037103748772505215",
             "extra": "mean: 519.1541456000607 usec\nrounds: 1250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "nstarman@users.noreply.github.com",
+            "name": "Nathaniel Starkman",
+            "username": "nstarman"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b48d4b0f620a2125a99c08828ec8f713d2610a91",
+          "message": "🎨 assets: add a logo, JAX's with the J's stem crossed into a + (#28)\n\njaxmore had no logo. It now has JAX's (the letters J, A and X built from\nrhombi on a triangular lattice) with the J's stem crossed, on the lattice,\nby a bar through the A, so the stem reads as a big +, in dark grey so it\nshows on dark backgrounds too. docs/_static/make_logo.py writes it as an\nSVG (3.7 KB), and as a PNG at any width on request:\n\n    uv run docs/_static/make_logo.py --size 2048 big.png\n\nJAX's shapes are copied from its logo, credited in the script with their\nApache-2.0 licence.\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-03T18:43:32-04:00",
+          "tree_id": "679e05bab8adff4a7057864653e6677959f9f084",
+          "url": "https://github.com/GalacticDynamics/jaxmore/commit/b48d4b0f620a2125a99c08828ec8f713d2610a91"
+        },
+        "date": 1791067582381,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop",
+            "value": 27.731188504528053,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005064028339859379",
+            "extra": "mean: 36.06048113793306 msec\nrounds: 29"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop_jit",
+            "value": 99106.0764289986,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023658912052572653",
+            "extra": "mean: 10.090198664220333 usec\nrounds: 14673"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_closure",
+            "value": 765.9927490017639,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008060450568047303",
+            "extra": "mean: 1.3054953866119394 msec\nrounds: 732"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_carry",
+            "value": 768.500817907298,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007745268554343989",
+            "extra": "mean: 1.3012347894737402 msec\nrounds: 684"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_via_step_kw",
+            "value": 771.5747110382711,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006997217109981047",
+            "extra": "mean: 1.296050772133716 msec\nrounds: 689"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_empty_batch_skipping",
+            "value": 1213.7803084286877,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004232346637160005",
+            "extra": "mean: 823.8723210912532 usec\nrounds: 953"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_single_positional",
+            "value": 115146.87556001762,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001412363348214258",
+            "extra": "mean: 8.684560437584548 usec\nrounds: 50821"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_two_positionals",
+            "value": 112301.08427995608,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016030813729625203",
+            "extra": "mean: 8.904633525239113 usec\nrounds: 55761"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_with_kwonly",
+            "value": 109551.3824014371,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013560868195090092",
+            "extra": "mean: 9.12813675263017 usec\nrounds: 51531"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_outs_only",
+            "value": 234506.8513187127,
+            "unit": "iter/sec",
+            "range": "stddev: 9.290996846705253e-7",
+            "extra": "mean: 4.264267736216047 usec\nrounds: 103221"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_bind_free_pos_only",
+            "value": 118377.10705000059,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016424430714550545",
+            "extra": "mean: 8.447579307522831 usec\nrounds: 57731"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_varargs_bind_free",
+            "value": 113306.61125550019,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001358964115364495",
+            "extra": "mean: 8.825610340998153 usec\nrounds: 54753"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_pos_only_default_omitted",
+            "value": 79106.45393999983,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000015860608312849955",
+            "extra": "mean: 12.641193609291015 usec\nrounds: 45003"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_static_path",
+            "value": 2155.991089829946,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027264786928359672",
+            "extra": "mean: 463.82380925279017 usec\nrounds: 1405"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_kw_path",
+            "value": 1821.6487532574154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005085571610842055",
+            "extra": "mean: 548.9532481011124 usec\nrounds: 1185"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_general_path",
+            "value": 1974.9407019844525,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001882150856959252",
+            "extra": "mean: 506.34431656362324 usec\nrounds: 1292"
           }
         ]
       }
