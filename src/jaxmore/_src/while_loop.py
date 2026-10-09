@@ -42,8 +42,9 @@ def bounded_while_loop(
        than an unbounded `jax.lax.while_loop`.
     2. **Early stop without wasted work**: once the user condition fails
        (i.e. `cond_fn(val)` becomes `False`), we stop applying `body_fn` and
-       run only a no-op for the remaining scan steps. This preserves the fixed
-       length required by `scan` *without* performing unnecessary computation.
+       run only a no-op (plus `cond_fn`) for the remaining scan steps. This
+       preserves the fixed length required by `scan` *without* performing
+       unnecessary computation.
 
     If the user condition is still `True` after `max_steps` iterations (i.e. the
     loop would continue), an error is raised using `equinox.error_if`.
@@ -104,14 +105,9 @@ def bounded_while_loop(
     - `done == True` means the loop has logically terminated; remaining scan
       steps must be no-ops.
 
-    At each scan step we do:
-
-    - If `done` is already `True`: do nothing (no-op).
-    - Else (not done):
-        - Evaluate `continue_ = cond_fn(val)`.
-        - If `continue_` is `True`: apply `body_fn`.
-        - If `continue_` is `False`: mark `done = True` and do *not* apply
-          `body_fn`.
+    At each scan step we compute `go = (not done) and cond_fn(val)`, apply
+    `body_fn` only if `go`, and set `done = not go`. Once `done` is `True` it
+    stays `True`.
 
     After the scan finishes, if `done` is still `False`, then `cond_fn` never
     became false within the allowed steps, meaning the bounded loop
@@ -122,9 +118,12 @@ def bounded_while_loop(
     - The remaining post-termination scan iterations are routed through a branch
       that returns the carry unchanged. At runtime this avoids executing
       `body_fn` after termination.
-    - `body_fn` and `cond_fn` are still traced/compiled as part of the JAX
-      program (that is unavoidable), but they are not *executed* once
-      `done=True`.
+    - `body_fn` is still traced/compiled as part of the JAX program (that is
+      unavoidable), but it is not *executed* once `done=True`.
+    - `cond_fn` *is* evaluated on the frozen carry at every scan step, even
+      after termination. This keeps a single `lax.cond` per step, which lets
+      XLA update the carry in place (O(1) per step rather than O(carry size)).
+      `cond_fn` should therefore be a cheap, pure predicate.
 
     """
     if not isinstance(max_steps, int) or max_steps < 0:  # type: ignore[redundant-expr]
@@ -147,30 +146,14 @@ def bounded_while_loop(
             - done: whether the loop has already terminated
         """
         val, done = carry
-
-        def already_done(_: object, /) -> tuple[T, _BoolScalar]:
-            # No-op: preserve carry; remain done.
-            return carry
-
-        def do_body(_: object, /) -> tuple[T, _BoolScalar]:
-            # Continue: apply body; still not done.
-            return body_fn(val), jnp.asarray(False)  # noqa: FBT003
-
-        def stop_now(_: object, /) -> tuple[T, _BoolScalar]:
-            # Stop: mark done, and do not run body.
-            return val, jnp.asarray(True)  # noqa: FBT003
-
-        def not_done(_: object, /) -> tuple[T, _BoolScalar]:
-            # We are still "in the loop": check whether to continue.
-            continue_ = jnp.asarray((cond_fn(val)), dtype=bool)
-
-            # If continue_ is True, run body. Otherwise terminate (done=True).
-            return lax.cond(continue_, do_body, stop_now, operand=None)  # type: ignore[no-any-return]
-
-        # If we've already terminated, skip everything. Otherwise, proceed as
-        # above.
-        new_val, new_done = lax.cond(done, already_done, not_done, operand=None)
-        return (new_val, new_done), None
+        # A single `cond` per step: nested conds make XLA copy the carry on
+        # every step (O(carry size) per iteration). `done` latches because
+        # `go` requires `not done`.
+        go = jnp.logical_and(
+            jnp.logical_not(done), jnp.asarray(cond_fn(val), dtype=bool)
+        )
+        new_val = lax.cond(go, body_fn, lambda v: v, val)
+        return (new_val, jnp.logical_not(go)), None
 
     # Carry includes the termination flag. `done` starts False: we have not
     # terminated.
