@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791067583250,
+  "lastUpdate": 1791507217028,
   "repoUrl": "https://github.com/GalacticDynamics/jaxmore",
   "entries": {
     "jaxmore Benchmarks": [
@@ -1063,6 +1063,142 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001882150856959252",
             "extra": "mean: 506.34431656362324 usec\nrounds: 1292"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0725cc5ca30228f8663bc7462c51b4a5f035279b",
+          "message": "build(deps): bump the actions group with 6 updates (#27)\n\nBumps the actions group with 6 updates:\n\n| Package | From | To |\n| --- | --- | --- |\n| [pypa/gh-action-pypi-publish](https://github.com/pypa/gh-action-pypi-publish) | `1.14.0` | `1.14.2` |\n| [astral-sh/setup-uv](https://github.com/astral-sh/setup-uv) | `8.2.0` | `10.2.0` |\n| [codecov/codecov-action](https://github.com/codecov/codecov-action) | `7.0.0` | `7.1.1` |\n| [benchmark-action/github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) | `1.22.1` | `1.22.2` |\n| [re-actors/alls-green](https://github.com/re-actors/alls-green) | `1.2.2` | `1.3.0` |\n| [actions/labeler](https://github.com/actions/labeler) | `6` | `7` |\n\n\nUpdates `pypa/gh-action-pypi-publish` from 1.14.0 to 1.14.2\n- [Release notes](https://github.com/pypa/gh-action-pypi-publish/releases)\n- [Commits](https://github.com/pypa/gh-action-pypi-publish/compare/cef221092ed1bacb1cc03d23a2d87d1d172e277b...dc37677b2e1c63e2034f94d8a5b11f265b73ba33)\n\nUpdates `astral-sh/setup-uv` from 8.2.0 to 10.2.0\n- [Release notes](https://github.com/astral-sh/setup-uv/releases)\n- [Commits](https://github.com/astral-sh/setup-uv/compare/fac544c07dec837d0ccb6301d7b5580bf5edae39...c18668ad3cf93ea998bef934396af7bb5c839dc7)\n\nUpdates `codecov/codecov-action` from 7.0.0 to 7.1.1\n- [Release notes](https://github.com/codecov/codecov-action/releases)\n- [Changelog](https://github.com/codecov/codecov-action/blob/main/CHANGELOG.md)\n- [Commits](https://github.com/codecov/codecov-action/compare/fb8b3582c8e4def4969c97caa2f19720cb33a72f...303a32d7a59b442fa8d48b6a1cc6825c09c847a5)\n\nUpdates `benchmark-action/github-action-benchmark` from 1.22.1 to 1.22.2\n- [Release notes](https://github.com/benchmark-action/github-action-benchmark/releases)\n- [Changelog](https://github.com/benchmark-action/github-action-benchmark/blob/master/CHANGELOG.md)\n- [Commits](https://github.com/benchmark-action/github-action-benchmark/compare/52576c92bccf6ac60c8223ec7eb2565637cae9ba...4322e5726e6334590d251fc4f92bec0efafc45dc)\n\nUpdates `re-actors/alls-green` from 1.2.2 to 1.3.0\n- [Release notes](https://github.com/re-actors/alls-green/releases)\n- [Commits](https://github.com/re-actors/alls-green/compare/05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe...b5b5b37504aa4183270bd3d855c52a67f212be35)\n\nUpdates `actions/labeler` from 6 to 7\n- [Release notes](https://github.com/actions/labeler/releases)\n- [Commits](https://github.com/actions/labeler/compare/v6...v7)\n\n---\nupdated-dependencies:\n- dependency-name: pypa/gh-action-pypi-publish\n  dependency-version: 1.14.2\n  dependency-type: direct:production\n  update-type: version-update:semver-patch\n  dependency-group: actions\n- dependency-name: astral-sh/setup-uv\n  dependency-version: 10.2.0\n  dependency-type: direct:production\n  update-type: version-update:semver-major\n  dependency-group: actions\n- dependency-name: codecov/codecov-action\n  dependency-version: 7.1.1\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: actions\n- dependency-name: benchmark-action/github-action-benchmark\n  dependency-version: 1.22.2\n  dependency-type: direct:production\n  update-type: version-update:semver-patch\n  dependency-group: actions\n- dependency-name: re-actors/alls-green\n  dependency-version: 1.3.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: actions\n- dependency-name: actions/labeler\n  dependency-version: '7'\n  dependency-type: direct:production\n  update-type: version-update:semver-major\n  dependency-group: actions\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-08T20:37:09-04:00",
+          "tree_id": "c3d4d4bd7a459c36155ed1df65560ac0106e104b",
+          "url": "https://github.com/GalacticDynamics/jaxmore/commit/0725cc5ca30228f8663bc7462c51b4a5f035279b"
+        },
+        "date": 1791507216629,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop",
+            "value": 27.522951940081775,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002065610674294917",
+            "extra": "mean: 36.333312000000134 msec\nrounds: 29"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop_jit",
+            "value": 99750.66685692094,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000027343985263367837",
+            "extra": "mean: 10.024995636714559 usec\nrounds: 27044"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_closure",
+            "value": 780.6663739672484,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009389638755781303",
+            "extra": "mean: 1.2809569277566364 msec\nrounds: 789"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_carry",
+            "value": 771.9274851636145,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008514515102770931",
+            "extra": "mean: 1.2954584714496133 msec\nrounds: 683"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_via_step_kw",
+            "value": 777.4978952051194,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008248450780397476",
+            "extra": "mean: 1.2861771152913282 msec\nrounds: 824"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_empty_batch_skipping",
+            "value": 1219.1461018440764,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004585398117592588",
+            "extra": "mean: 820.2462350389369 usec\nrounds: 1153"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_single_positional",
+            "value": 116884.89059015192,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017494475796711993",
+            "extra": "mean: 8.555425726550276 usec\nrounds: 50718"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_two_positionals",
+            "value": 115230.25978244994,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013702724750883123",
+            "extra": "mean: 8.678276017844265 usec\nrounds: 53348"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_with_kwonly",
+            "value": 113404.06625720732,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013539916227605165",
+            "extra": "mean: 8.818025958010528 usec\nrounds: 53548"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_outs_only",
+            "value": 233019.88215670208,
+            "unit": "iter/sec",
+            "range": "stddev: 8.626886347883987e-7",
+            "extra": "mean: 4.291479296721626 usec\nrounds: 106191"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_bind_free_pos_only",
+            "value": 120037.47438504722,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001336528715876999",
+            "extra": "mean: 8.330731757919823 usec\nrounds: 58779"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_varargs_bind_free",
+            "value": 116448.50765829616,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001254839013616981",
+            "extra": "mean: 8.587486607680514 usec\nrounds: 57757"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_pos_only_default_omitted",
+            "value": 81416.55126669239,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000015400770809431292",
+            "extra": "mean: 12.282514850381549 usec\nrounds: 44679"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_static_path",
+            "value": 2187.8321146707044,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000035651826410844455",
+            "extra": "mean: 457.0734624902937 usec\nrounds: 1293"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_kw_path",
+            "value": 1793.49773705023,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027115533197943768",
+            "extra": "mean: 557.5697026775748 usec\nrounds: 1083"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_general_path",
+            "value": 1915.877199834614,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004361754639879093",
+            "extra": "mean: 521.9541211129418 usec\nrounds: 1222"
           }
         ]
       }
