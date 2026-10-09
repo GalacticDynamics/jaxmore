@@ -1,5 +1,6 @@
 """Unit tests for bounded_while_loop."""
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -59,6 +60,24 @@ def test_early_stop_no_extra_body_calls() -> None:
     )
     assert int(result[0]) == 2
     assert int(result[1]) == 2
+
+
+def test_early_stop_no_extra_cond_calls() -> None:
+    """Do not evaluate `cond_fn` after termination (GH #29)."""
+    calls = []
+
+    def cond_fn(x):
+        jax.debug.callback(lambda: calls.append(1))
+        return x < 2
+
+    def body_fn(x):
+        return x + 1
+
+    result = bounded_while_loop(cond_fn, body_fn, jnp.asarray(0), max_steps=10)
+    jax.effects_barrier()
+    assert int(result) == 2
+    # 2 True evaluations + 1 False, then no more.
+    assert len(calls) == 3
 
 
 def test_max_steps_zero_returns_init_without_calling_fns() -> None:
