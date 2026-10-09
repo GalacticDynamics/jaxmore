@@ -42,7 +42,7 @@ def bounded_while_loop(
        than an unbounded `jax.lax.while_loop`.
     2. **Early stop without wasted work**: once the user condition fails
        (i.e. `cond_fn(val)` becomes `False`), we stop applying `body_fn` and
-       run only a no-op (plus `cond_fn`) for the remaining scan steps. This
+       run only a no-op for the remaining scan steps. This
        preserves the fixed length required by `scan` *without* performing
        unnecessary computation.
 
@@ -118,12 +118,12 @@ def bounded_while_loop(
     - The remaining post-termination scan iterations are routed through a branch
       that returns the carry unchanged. At runtime this avoids executing
       `body_fn` after termination.
-    - `body_fn` is still traced/compiled as part of the JAX program (that is
-      unavoidable), but it is not *executed* once `done=True`.
-    - `cond_fn` *is* evaluated on the frozen carry at every scan step, even
-      after termination. This keeps a single `lax.cond` per step, which lets
-      XLA update the carry in place (O(1) per step rather than O(carry size)).
-      `cond_fn` should therefore be a cheap, pure predicate.
+    - `body_fn` and `cond_fn` are still traced/compiled as part of the JAX
+      program (that is unavoidable), but they are not *executed* once
+      `done=True`.
+    - The predicate and body use two sequential (not nested) `lax.cond`s, so
+      XLA can update the carry in place: O(1) per step rather than O(carry
+      size).
 
     """
     if not isinstance(max_steps, int) or max_steps < 0:  # type: ignore[redundant-expr]
@@ -146,11 +146,15 @@ def bounded_while_loop(
             - done: whether the loop has already terminated
         """
         val, done = carry
-        # A single `cond` per step: nested conds make XLA copy the carry on
-        # every step (O(carry size) per iteration). `done` latches because
-        # `go` requires `not done`.
-        go = jnp.logical_and(
-            jnp.logical_not(done), jnp.asarray(cond_fn(val), dtype=bool)
+        # Two sequential (not nested) conds: nested conds make XLA copy the
+        # carry on every step (O(carry size) per iteration). The first only
+        # returns a bool, so it skips `cond_fn` once done without touching
+        # the carry. `done` latches because `go` requires `not done`.
+        go = lax.cond(
+            done,
+            lambda _: jnp.asarray(False),  # noqa: FBT003
+            lambda v: jnp.asarray(cond_fn(v), dtype=bool),
+            val,
         )
         new_val = lax.cond(go, body_fn, lambda v: v, val)
         return (new_val, jnp.logical_not(go)), None

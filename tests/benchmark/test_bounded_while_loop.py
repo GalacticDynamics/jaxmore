@@ -74,3 +74,25 @@ def test_bench_large_carry_jit(benchmark, n) -> None:
     jax.block_until_ready(run(init))
 
     benchmark(lambda: jax.block_until_ready(run(init)))
+
+
+@pytest.mark.benchmark
+def test_bench_early_exit_expensive_cond_jit(benchmark) -> None:
+    """`cond_fn` must not run after termination (O(n) cond, early exit)."""
+
+    def cond_fn(x):
+        return x.sum() < 1e6
+
+    def body_fn(x):
+        return x * 1.01 + 1
+
+    @jax.jit
+    def run(x):
+        return bounded_while_loop(cond_fn, body_fn, x, max_steps=2_000)
+
+    init = jnp.ones(10_000)
+
+    # Warm up (JIT compile)
+    run(init).block_until_ready()
+
+    benchmark(lambda: run(init).block_until_ready())
