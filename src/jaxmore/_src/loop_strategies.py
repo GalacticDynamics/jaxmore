@@ -211,16 +211,19 @@ _vmap = _make(_flat(lambda g, xs: jax.vmap(g)(*xs)))
 _scan = _make(_flat(_scan_runner))
 
 
-def _no_loop(f: Callable[..., Any], signature: str | None) -> Callable[..., Any]:  # noqa: ARG001
+def _no_loop(f: Callable[..., Any], _signature: str | None) -> Callable[..., Any]:
     return f
 
 
 def _determine(f: Callable[..., Any], signature: str | None) -> Callable[..., Any]:
-    # Chosen when called, not when built, so it follows the backend in use then.
-    # `scan` is the cheapest on CPU, where there is no parallel hardware to feed.
+    # Both candidates are built once, here. Which one runs is chosen when called,
+    # so it follows the backend in use then. `scan` is the cheapest on CPU, where
+    # there is no parallel hardware to feed.
+    scan, vectorize = _scan(f, signature), _vectorize(f, signature)
+
     def batched(*args: Any, **kw: Any) -> Any:
-        impl = _scan if jax.default_backend() == "cpu" else _vectorize
-        return impl(f, signature)(*args, **kw)
+        impl = scan if jax.default_backend() == "cpu" else vectorize
+        return impl(*args, **kw)
 
     return batched
 

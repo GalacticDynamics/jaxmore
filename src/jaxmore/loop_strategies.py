@@ -3,6 +3,8 @@
 Strategies for :func:`jaxmore.loop`.
 """
 
+# pylint: disable=duplicate-code
+
 __all__ = (
     "AbstractLoopStrategy",
     "AbstractVMap",
