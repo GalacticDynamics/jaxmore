@@ -10,7 +10,6 @@ classifiers = [
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -19,13 +18,13 @@ classifiers = [
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
-dependencies = ["jax>=0.4.20", "jaxtyping>=0.3.7", "optional_dependencies>=0.3"]
+dependencies = ["jax>=0.7.2", "jaxtyping>=0.3.7", "optional_dependencies>=0.3"]
 description = "There's more to JAX."
 dynamic = ["version"]
 license.file = "LICENSE"
 name = "jaxmore"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.urls]
 "Bug Tracker" = "https://github.com/GalacticDynamics/jaxmore/issues"
@@ -119,7 +118,7 @@ disallow_incomplete_defs = false
 disallow_untyped_defs    = false
 enable_error_code        = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 files                    = ["src"]
-python_version           = "3.10"
+python_version           = "3.11"
 strict                   = true
 warn_unreachable         = true
 warn_unused_configs      = true
@@ -184,7 +183,7 @@ messages_control.disable = [
   "missing-module-docstring",
   "wrong-import-position",
 ]
-py-version = "3.10"
+py-version = "3.11"
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
 
