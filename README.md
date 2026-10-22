@@ -12,6 +12,9 @@ Major features include:
 
 - `vmap` — a drop-in replacement for `jax.vmap` with static-arg/kwarg support
   and per-kwarg axis control.
+- `loop` — map a function over batch dimensions with a choice of strategy
+  (`Vectorize`, `VMap`, `Scan`, `NoLoop`, or `Determine`, which picks by
+  platform), for pytree arguments and gufunc-style signatures.
 - `bounded_while_loop` — a reverse-mode-friendly, bounded `while_loop`
   implemented via `lax.scan`.
 - `structured` — a decorator that applies per-argument and per-return-value
