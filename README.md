@@ -160,10 +160,11 @@ print(result)  # (Array(3, dtype=int32), Array(8, dtype=int32))
 ### `loop` — one call, several ways to loop
 
 `jaxmore.loop` maps a function over the batch dimensions of its arguments. The
-strategy in `jaxmore.loop_strategies` decides how: `Vectorize`
-(`jnp.vectorize`), `VMap` (flatten, then `jax.vmap`), `Scan` (flatten, then
-`jax.lax.scan`, sequential and cheap in memory), `NoLoop`, or `Determine`
-(`Scan` on CPU, `Vectorize` elsewhere).
+strategy in `jaxmore.loop_strategies` decides how: `Vectorize` (one `jax.vmap`
+per batch dimension, like `jnp.vectorize`), `VMap` (flatten, then `jax.vmap`),
+`Scan` (flatten, then `jax.lax.scan`, sequential and cheap in memory), `NoLoop`,
+or `Determine` (`Scan` on CPU, `Vectorize` elsewhere, decided when called).
+Arguments may be pytrees, and keyword arguments are passed to `f` unmapped.
 
 ```python
 import jax.numpy as jnp

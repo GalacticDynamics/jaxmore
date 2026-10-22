@@ -99,7 +99,67 @@ def test_abstract_strategy_raises() -> None:
         jm.loop(ls.AbstractVMap, norm_t)
 
 
-@pytest.mark.parametrize("strategy", [ls.VMap, ls.Scan])
+@pytest.mark.parametrize("strategy", MAPPED)
+def test_output_signature_is_ignored(strategy) -> None:
+    """Output core dims of any shape are inferred, never validated."""
+    f = jm.loop(
+        strategy, lambda x, t: {"a": x * t, "b": jnp.sum(x)}, signature="(n),()"
+    )
+    out = f(X, T)
+    assert out["a"].shape == X.shape
+    assert out["b"].shape == (2, 3)
+    assert jnp.allclose(out["a"], X * T[:, None])
+
+
+@pytest.mark.parametrize("strategy", MAPPED)
+def test_pytree_args(strategy) -> None:
+    """A signature entry applies to every leaf of a pytree argument."""
+
+    def f(w, t):
+        q, p = w
+        return jnp.sum(q * p) * t
+
+    w = (X, X + 1)
+    out = jm.loop(strategy, f, signature="(n),()")(w, T)
+    assert jnp.allclose(out, jnp.sum(X * (X + 1), axis=-1) * T)
+
+
+@pytest.mark.parametrize("strategy", MAPPED)
+def test_kwargs_are_not_mapped(strategy) -> None:
+    """Keyword arguments reach every call whole."""
+    k = jnp.arange(5.0)  # not a batch dimension
+    out = jm.loop(strategy, lambda x, *, k: jnp.sum(x * k))(jnp.arange(3.0), k=k)
+    assert out.shape == (3,)
+    assert jnp.allclose(out, jnp.arange(3.0) * jnp.sum(k))
+
+
+@pytest.mark.parametrize("strategy", MAPPED)
+def test_size_one_batch_dims(strategy) -> None:
+    """Size-1 batch dimensions broadcast, including when every one is size 1."""
+    f = jm.loop(strategy, lambda a, b: a * b)
+    a, b = jnp.arange(3.0)[:, None], jnp.arange(4.0)[None, :]
+    assert jnp.allclose(f(a, b), a * b)
+    assert jnp.allclose(f(a[:1], b[:, :1]), a[:1] * b[:, :1])
+
+
+def test_vectorize_matches_jnp_vectorize() -> None:
+    """Vectorize reproduces jnp.vectorize, incl. mixed batch ranks."""
+    ref = jnp.vectorize(norm_t, signature="(n),()->()")
+    out = jm.loop(ls.Vectorize, norm_t, signature="(n),()->()")(X, T[:, None, None])
+    assert jnp.allclose(out, ref(X, T[:, None, None]))
+
+
+def test_determine_resolves_at_call_time(monkeypatch) -> None:
+    """Determine follows the backend when called, not when built."""
+    f = jm.loop(ls.Determine, norm_t, signature="(n),()->()")
+    expected = jnp.linalg.norm(X, axis=-1) * T
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+    assert jnp.allclose(f(X, T), expected)  # took the Vectorize branch
+    monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
+    assert jnp.allclose(f(X, T), expected)
+
+
+@pytest.mark.parametrize("strategy", [ls.Vectorize, ls.VMap, ls.Scan])
 def test_bad_signature(strategy) -> None:
     """Argument count and rank are checked against the signature."""
     f = jm.loop(strategy, norm_t, signature="(n),()->()")
