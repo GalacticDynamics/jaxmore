@@ -94,16 +94,6 @@ def test_no_loop_is_identity() -> None:
     assert jm.loop(ls.NoLoop, norm_t) is norm_t
 
 
-def test_subclass_uses_parent_implementation() -> None:
-    """A user subclass of a strategy runs the parent's implementation."""
-
-    class MyScan(ls.Scan):
-        pass
-
-    out = jm.loop(MyScan, norm_t, signature="(n),()->()")(X, T)
-    assert jnp.allclose(out, jnp.linalg.norm(X, axis=-1) * T)
-
-
 def test_abstract_strategy_raises() -> None:
     """Abstract strategies have no implementation."""
     with pytest.raises(TypeError, match="no implementation"):

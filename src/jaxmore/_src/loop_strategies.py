@@ -12,9 +12,8 @@ __all__ = (
 )
 
 import functools as ft
-import math
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, NoReturn
 
 import jax
@@ -64,11 +63,15 @@ class Vectorize(AbstractVMap):
 
 
 class VMap(AbstractVMap):
-    """Loop strategy for flattening the batch, then one :func:`jax.vmap`."""
+    """Loop strategy for :func:`jax.vmap`.
+
+    Runs as `Vectorize` does. It is a separate tag so that a library can
+    dispatch on it, for example to flatten the batch first.
+    """
 
 
 class Scan(AbstractLoopStrategy):
-    """Loop strategy for flattening the batch, then :func:`jax.lax.scan`."""
+    """Loop strategy for :func:`jax.lax.map` (a scan) over each batch dimension."""
 
 
 # ===================================================================
@@ -107,146 +110,77 @@ def _parse_signature(
 
 def _flatten_args(
     args: tuple[Any, ...], signature: str | None, /
-) -> tuple[list[jax.Array], list[int], Callable[[Sequence[Any]], list[Any]]]:
+) -> tuple[list[jax.Array], list[int], Any]:
     # Split pytree arguments into array leaves, each with the core ndim of its
-    # argument, plus a function to rebuild the arguments from the leaves. Checks
-    # that the leaves agree with the signature, including that a named core
-    # dimension has one size throughout.
+    # argument, plus the treedef to rebuild the arguments. Checks that the
+    # leaves agree with the signature, including that a named core dimension has
+    # one size throughout.
     arg_dims = _parse_signature(signature, len(args))
-    treedefs = [jtu.structure(a) for a in args]
+    flat, treedef = jtu.flatten(args)
+    leaves = [jnp.asarray(leaf) for leaf in flat]
+    leaf_dims = [d for a, d in zip(args, arg_dims, strict=True) for _ in jtu.leaves(a)]
     sizes: dict[str, int] = {}
-    leaves: list[jax.Array] = []
-    ndims: list[int] = []
-    counts: list[int] = []
-    for a, dims in zip(args, arg_dims, strict=True):
-        arrs = [jnp.asarray(leaf) for leaf in jtu.leaves(a)]
-        for arr in arrs:
-            if arr.ndim < len(dims):
-                msg = f"argument of shape {arr.shape} has fewer dimensions than {dims}"
+    for arr, dims in zip(leaves, leaf_dims, strict=True):
+        if arr.ndim < len(dims):
+            msg = f"argument of shape {arr.shape} has fewer dimensions than {dims}"
+            raise ValueError(msg)
+        for name, size in zip(dims, arr.shape[arr.ndim - len(dims) :], strict=True):
+            expected = int(name) if name.isdigit() else sizes.setdefault(name, size)
+            if size != expected:
+                msg = (
+                    f"inconsistent size for core dimension {name!r}: "
+                    f"{size} vs {expected}"
+                )
                 raise ValueError(msg)
-            for name, size in zip(dims, arr.shape[arr.ndim - len(dims) :], strict=True):
-                expected = int(name) if name.isdigit() else sizes.setdefault(name, size)
-                if size != expected:
-                    msg = (
-                        f"inconsistent size for core dimension {name!r}: "
-                        f"{size} vs {expected}"
-                    )
-                    raise ValueError(msg)
-        leaves += arrs
-        ndims += [len(dims)] * len(arrs)
-        counts.append(len(arrs))
-
-    def rebuild(flat: Sequence[Any], /) -> list[Any]:
-        out, i = [], 0
-        for treedef, count in zip(treedefs, counts, strict=True):
-            out.append(jtu.unflatten(treedef, flat[i : i + count]))
-            i += count
-        return out
-
-    return leaves, ndims, rebuild
+    return leaves, [len(d) for d in leaf_dims], treedef
 
 
-def _pad(leaves: list[jax.Array], ndims: list[int], k: int, /) -> list[jax.Array]:
-    # Give every leaf exactly `k` leading batch dimensions, of size 1 if missing.
-    return [
-        a.reshape((1,) * (k - (a.ndim - n)) + a.shape)
-        for a, n in zip(leaves, ndims, strict=True)
-    ]
+def _vmap_level(
+    inner: Callable[..., Any], axes: tuple[int | None, ...], args: tuple[Any, ...], /
+) -> Any:
+    return jax.vmap(inner, in_axes=axes)(*args)
 
 
-def _nest(g: Callable[..., Any], depth: int, /) -> Callable[..., Any]:
-    # `g` vmapped over `depth` leading batch dimensions. A batch dimension of
-    # size 1 is not mapped (like `jnp.vectorize`), so it is never materialized.
+def _map_level(
+    inner: Callable[..., Any], axes: tuple[int | None, ...], args: tuple[Any, ...], /
+) -> Any:
+    # Sequential: `lax.map` over the mapped arguments, the rest closed over.
+    def body(mapped: tuple[Any, ...]) -> Any:
+        it = iter(mapped)
+        return inner(
+            *(next(it) if ax == 0 else a for a, ax in zip(args, axes, strict=True))
+        )
+
+    return jax.lax.map(
+        body, tuple(a for a, ax in zip(args, axes, strict=True) if ax == 0)
+    )
+
+
+def _nest(
+    g: Callable[..., Any], depth: int, level: Callable[..., Any], /
+) -> Callable[..., Any]:
+    # `g` mapped, by `level`, over `depth` leading batch dimensions. A batch
+    # dimension of size 1 is not mapped (like `jnp.vectorize`), so an argument
+    # that is shared is never copied.
     if depth == 0:
         return g
-    inner = _nest(g, depth - 1)
+    inner = _nest(g, depth - 1, level)
 
     def step(*args: jax.Array) -> Any:
         axes = tuple(None if a.shape[0] == 1 else 0 for a in args)
         sq = tuple(a[0] if ax is None else a for a, ax in zip(args, axes, strict=True))
         if all(ax is None for ax in axes):  # nothing to map: size-1 batch
             return jtu.map(lambda x: jnp.asarray(x)[None], inner(*sq))
-        return jax.vmap(inner, in_axes=axes)(*sq)
+        return level(inner, axes, sq)
 
     return step
 
 
-def _element(
-    g: Callable[..., Any],
-    leaves: list[jax.Array],
-    ndims: list[int],
-    batch: tuple[int, ...],
-    /,
-) -> Callable[[jax.Array], Any]:
-    # `g` of the `i`-th element of the flattened batch. Each leaf is indexed
-    # rather than broadcast: a leaf shared by the whole batch is read at a
-    # constant index, so it is never copied (and `vmap` leaves it unmapped).
-    padded = _pad(leaves, ndims, len(batch))
-
-    def element(i: jax.Array) -> Any:
-        idx = []
-        for size in reversed(batch):  # unravel the flat index
-            idx.append(i % size)
-            i = i // size
-        idx.reverse()
-        return g(
-            *(
-                a[tuple(0 if a.shape[d] == 1 else idx[d] for d in range(len(batch)))]
-                for a in padded
-            )
-        )
-
-    return element
-
-
-def _unflatten(out: Any, batch: tuple[int, ...], /) -> Any:
-    return jtu.map(lambda x: x.reshape(*batch, *x.shape[1:]), out)
-
-
-_Run = Callable[[Callable[..., Any], list[jax.Array], list[int], tuple[int, ...]], Any]
-
-
-def _run_vectorize(
-    g: Callable[..., Any],
-    leaves: list[jax.Array],
-    ndims: list[int],
-    batch: tuple[int, ...],
-) -> Any:
-    out = _nest(g, len(batch))(*_pad(leaves, ndims, len(batch)))
-    return jtu.map(jnp.asarray, out)
-
-
-def _run_vmap(
-    g: Callable[..., Any],
-    leaves: list[jax.Array],
-    ndims: list[int],
-    batch: tuple[int, ...],
-) -> Any:
-    if 0 in batch:  # nothing to index; the nested form gets the empty shapes
-        return _run_vectorize(g, leaves, ndims, batch)
-    flat = jnp.arange(math.prod(batch))
-    return _unflatten(jax.vmap(_element(g, leaves, ndims, batch))(flat), batch)
-
-
-def _run_scan(
-    g: Callable[..., Any],
-    leaves: list[jax.Array],
-    ndims: list[int],
-    batch: tuple[int, ...],
-) -> Any:
-    if 0 in batch:  # nothing to index; the nested form gets the empty shapes
-        return _run_vectorize(g, leaves, ndims, batch)
-    el = _element(g, leaves, ndims, batch)
-    flat = jnp.arange(math.prod(batch))
-    _, out = jax.lax.scan(lambda c, i: (c, el(i)), None, flat)
-    return _unflatten(out, batch)
-
-
-def _make(run: _Run, /) -> Callable[..., Callable[..., Any]]:
-    # Build an implementation from `run(g, leaves, core_ndims, batch_shape)`.
+def _make(level: Callable[..., Any], /) -> Callable[..., Callable[..., Any]]:
+    # Build an implementation that maps over the batch dimensions with `level`.
     def impl(f: Callable[..., Any], signature: str | None) -> Callable[..., Any]:
         def batched(*args: Any, **kw: Any) -> Any:
-            leaves, ndims, rebuild = _flatten_args(args, signature)
+            leaves, ndims, treedef = _flatten_args(args, signature)
             if not leaves:
                 msg = (
                     "a looped function needs at least one array in its positional "
@@ -256,20 +190,23 @@ def _make(run: _Run, /) -> Callable[..., Callable[..., Any]]:
             batch = jnp.broadcast_shapes(
                 *(a.shape[: a.ndim - n] for a, n in zip(leaves, ndims, strict=True))
             )
+            padded = [  # exactly len(batch) leading batch dimensions, 1 if missing
+                a.reshape((1,) * (len(batch) - (a.ndim - n)) + a.shape)
+                for a, n in zip(leaves, ndims, strict=True)
+            ]
 
             def g(*flat: jax.Array) -> Any:
-                return f(*rebuild(flat), **kw)
+                return f(*jtu.unflatten(treedef, flat), **kw)
 
-            return run(g, leaves, ndims, batch)
+            return jtu.map(jnp.asarray, _nest(g, len(batch), level)(*padded))
 
         return batched
 
     return impl
 
 
-_vectorize = _make(_run_vectorize)
-_vmap = _make(_run_vmap)
-_scan = _make(_run_scan)
+_vectorize = _make(_vmap_level)
+_scan = _make(_map_level)
 
 
 def _no_loop(f: Callable[..., Any], _signature: str | None) -> Callable[..., Any]:
@@ -294,7 +231,7 @@ _IMPLEMENTATIONS: dict[Any, Callable[..., Callable[..., Any]]] = {
     NoLoop: _no_loop,
     Scan: _scan,
     Vectorize: _vectorize,
-    VMap: _vmap,
+    VMap: _vectorize,
 }
 
 
@@ -318,14 +255,14 @@ def loop(
         - `~jaxmore.loop_strategies.Vectorize`: one `jax.vmap` per batch
           dimension, like `jax.numpy.vectorize`. Batch dimensions of size 1 are
           not mapped.
-        - `~jaxmore.loop_strategies.VMap`: flatten the batch dimensions into one,
-          then a single `jax.vmap` over it.
-        - `~jaxmore.loop_strategies.Scan`: flatten the batch dimensions into
-          one, then `jax.lax.scan` over it. Sequential, so the intermediates are
-          those of a single call; only the stacked outputs grow with the batch.
+        - `~jaxmore.loop_strategies.VMap`: the same as ``Vectorize`` here. A
+          separate tag, so that libraries can dispatch on it.
+        - `~jaxmore.loop_strategies.Scan`: `jax.lax.map`, a scan, over each batch
+          dimension. Sequential, so the intermediates are those of a single call;
+          only the stacked outputs grow with the batch.
 
-        ``VMap`` and ``Scan`` index each argument instead of broadcasting it, so
-        an argument shared by every batch element is never copied.
+        No strategy broadcasts an argument, so one shared by every batch element
+        is never copied.
         - `~jaxmore.loop_strategies.NoLoop`: return ``f`` unchanged, for a
           function that is already batched.
         - `~jaxmore.loop_strategies.Determine`: ``Scan`` on CPU, ``Vectorize``
@@ -397,15 +334,9 @@ def loop(
     {'energy': Array([ 2., 10.], dtype=float32)}
 
     """
-    if not (isinstance(strategy, type) and issubclass(strategy, AbstractLoopStrategy)):  # type: ignore[redundant-expr]
-        msg = f"strategy must be a loop strategy class, got {strategy!r}"
-        raise TypeError(msg)
-    for cls in strategy.__mro__:
-        if cls in _IMPLEMENTATIONS:
-            impl = _IMPLEMENTATIONS[cls]
-            break
-    else:
-        msg = f"no implementation for loop strategy {strategy.__name__}"
+    impl = _IMPLEMENTATIONS.get(strategy)
+    if impl is None:
+        msg = f"no implementation for loop strategy {strategy!r}"
         raise TypeError(msg)
 
     batched = impl(f, signature)
