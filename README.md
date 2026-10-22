@@ -12,6 +12,9 @@ Major features include:
 
 - `vmap` — a drop-in replacement for `jax.vmap` with static-arg/kwarg support
   and per-kwarg axis control.
+- `loop` — map a function over batch dimensions with a choice of strategy
+  (`Vectorize`, `VMap`, `Scan`, `NoLoop`, or `Determine`, which picks by
+  platform), for pytree arguments and gufunc-style signatures.
 - `bounded_while_loop` — a reverse-mode-friendly, bounded `while_loop`
   implemented via `lax.scan`.
 - `structured` — a decorator that applies per-argument and per-return-value
@@ -155,6 +158,32 @@ result = bounded_while_loop(
     cond_fn, body_fn, (jnp.asarray(0), jnp.asarray(1)), max_steps=5
 )
 print(result)  # (Array(3, dtype=int32), Array(8, dtype=int32))
+```
+
+### `loop` — one call, several ways to loop
+
+`jaxmore.loop` maps a function over the batch dimensions of its arguments. The
+strategy in `jaxmore.loop_strategies` decides how: `Vectorize` (one `jax.vmap`
+per batch dimension, like `jnp.vectorize`), `VMap` (the same, as a separate tag
+for libraries to dispatch on), `Scan` (`jax.lax.map` per batch dimension,
+sequential and cheap in memory), `NoLoop`, or `Determine` (`Scan` on CPU,
+`Vectorize` elsewhere, decided when called). Arguments may be pytrees, and
+keyword arguments are passed to `f` unmapped.
+
+```python
+import jax.numpy as jnp
+import jaxmore as jm
+from jaxmore import loop_strategies as ls
+
+
+def norm_t(x, t):
+    return jnp.linalg.norm(x) * t
+
+
+x = jnp.array([[3.0, 4.0], [6.0, 8.0]])
+t = jnp.array([1.0, 2.0])
+
+jm.loop(ls.Scan, norm_t, signature="(n),()->()")(x, t)  # [ 5., 20.]
 ```
 
 ### `structured` — per-argument and per-return-value transformations
