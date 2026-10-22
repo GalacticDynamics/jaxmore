@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792708119930,
+  "lastUpdate": 1792709555256,
   "repoUrl": "https://github.com/GalacticDynamics/jaxmore",
   "entries": {
     "jaxmore Benchmarks": [
@@ -1827,6 +1827,163 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001859502371637999",
             "extra": "mean: 417.440716762819 usec\nrounds: 1038"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "nstarman@users.noreply.github.com",
+            "name": "Nathaniel Starkman",
+            "username": "nstarman"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0048b4058769c4961cb93dd90762c4cb8b5a099f",
+          "message": "✨ feat(loop): add `loop` and `loop_strategies` (#35)\n\n* ✨ feat(loop): add `loop` and `loop_strategies`\n\n`jaxmore.loop(strategy, f, signature=...)` maps `f` over the broadcast\nbatch dimensions of its arguments with one of `Vectorize`, `VMap`,\n`Scan`, `NoLoop` or `Determine` (Scan on CPU, Vectorize elsewhere).\nThe strategy tags live in `jaxmore.loop_strategies`.\n\n* ♻️ refactor(loop): infer outputs, accept pytree args and kwargs\n\n- `Vectorize` is now nested `jax.vmap`, so no strategy needs or checks the\n  output part of `signature`, and pytree outputs may differ in core shape.\n- Positional arguments may be pytrees; a signature entry applies to every\n  leaf. Keyword arguments are passed to `f` unmapped.\n- `Determine` picks its strategy when called, not when built.\n\n* 🐛 fix(loop): build `Determine`'s candidates once, satisfy pylint\n\n- `Determine` built its scan/vectorize wrapper on every call; build both\n  once and only choose between them when called.\n- Silence pylint: `_signature` is unused by `NoLoop`, and the public\n  re-export repeats the private `__all__` by design.\n\n* 🐛 fix(loop): index instead of broadcasting, validate signatures, fix NoLoop\n\nFixes from two independent audits of #35:\n\n- `VMap`/`Scan` indexed-per-element instead of pre-broadcasting every\n  argument, so a shared argument is never copied (80 MB -> 68 B/9 KB on\n  the audit's example); empty batches fall back to the nested form.\n- `loop(NoLoop, f)` no longer rewraps `f` onto itself, which set\n  `f.__wrapped__ = f` and broke `inspect` and `jax.jit`.\n- Parse signatures strictly (`ValueError` when malformed), and check that\n  named core dimensions agree and fixed sizes match, which also catches\n  pytree leaves with different core dims.\n- Raise a clear `TypeError` when no positional array is mapped or the\n  strategy is not a strategy class; name the class when a tag is\n  instantiated; return arrays for scalar-batch `Vectorize`.\n- Tests: assert which `Determine` branch ran, cover the tag contract,\n  empty/partially broadcast batches and the new errors. Document the\n  changes and list `loop` in the README features.\n\n* ♻️ refactor(loop): one nested pass for every strategy\n\n`Scan` is now the same nested mapping as `Vectorize`, with `jax.lax.map`\nat each batch level instead of `jax.vmap`, so the flat-index machinery\n(`_element`, `_run_vmap`, `_run_scan`, `_pad`, `_unflatten`) and the\nempty-batch fallbacks go away. `VMap` runs as `Vectorize`; it stays a\nseparate tag for libraries that dispatch on it.\n\nAlso rebuild arguments from one treedef, look strategies up in a dict\nwithout the MRO walk, and drop the redundant strategy type check.\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-22T18:45:41-04:00",
+          "tree_id": "b25be084548a10161d92792f0cdd8a290fb6a03b",
+          "url": "https://github.com/GalacticDynamics/jaxmore/commit/0048b4058769c4961cb93dd90762c4cb8b5a099f"
+        },
+        "date": 1792709554414,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop",
+            "value": 33.22055919901648,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010610616784287488",
+            "extra": "mean: 30.101841272726247 msec\nrounds: 33"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop_jit",
+            "value": 99765.17294085343,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000021663830306687026",
+            "extra": "mean: 10.023537979459604 usec\nrounds: 29042"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_large_carry_jit[2000]",
+            "value": 35824.54703400902,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004968779492834808",
+            "extra": "mean: 27.913821186648317 usec\nrounds: 17275"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_large_carry_jit[128000]",
+            "value": 20707.869225533774,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004565319015776713",
+            "extra": "mean: 48.290820707277454 usec\nrounds: 11735"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_early_exit_expensive_cond_jit",
+            "value": 2374.3079649341494,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000903222396809741",
+            "extra": "mean: 421.1753549955912 usec\nrounds: 2262"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_closure",
+            "value": 796.4140603280072,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008908574508165457",
+            "extra": "mean: 1.2556282589839574 msec\nrounds: 807"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_carry",
+            "value": 795.6959891306694,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009646783567163605",
+            "extra": "mean: 1.2567613933715327 msec\nrounds: 694"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_via_step_kw",
+            "value": 780.6545183459972,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007790989042239742",
+            "extra": "mean: 1.2809763813559147 msec\nrounds: 708"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_empty_batch_skipping",
+            "value": 1228.7114843432016,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000661897980549691",
+            "extra": "mean: 813.8607091595163 usec\nrounds: 1059"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_single_positional",
+            "value": 118727.3380899986,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014782226691018956",
+            "extra": "mean: 8.422659987895733 usec\nrounds: 51107"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_two_positionals",
+            "value": 116361.91055244845,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000012462140511087815",
+            "extra": "mean: 8.593877457428515 usec\nrounds: 54936"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_with_kwonly",
+            "value": 113255.42586269387,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000018146148969011274",
+            "extra": "mean: 8.829599044661737 usec\nrounds: 57363"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_outs_only",
+            "value": 235847.0755465031,
+            "unit": "iter/sec",
+            "range": "stddev: 8.447089969879383e-7",
+            "extra": "mean: 4.24003561495434 usec\nrounds: 106079"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_bind_free_pos_only",
+            "value": 118137.23663273067,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000022461947463740015",
+            "extra": "mean: 8.464731599477279 usec\nrounds: 59482"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_varargs_bind_free",
+            "value": 116371.58647320553,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000012798623757344314",
+            "extra": "mean: 8.593162904333603 usec\nrounds: 25162"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_pos_only_default_omitted",
+            "value": 82978.5060799178,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000015922885191452312",
+            "extra": "mean: 12.051313614116955 usec\nrounds: 42801"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_static_path",
+            "value": 2073.8736041451552,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000025587645704419997",
+            "extra": "mean: 482.1894632350061 usec\nrounds: 1360"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_kw_path",
+            "value": 1809.4955149281,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000212441143344934",
+            "extra": "mean: 552.6402202990455 usec\nrounds: 1271"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_general_path",
+            "value": 1911.0034969832354,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002669313659063049",
+            "extra": "mean: 523.2852800000778 usec\nrounds: 1275"
           }
         ]
       }
