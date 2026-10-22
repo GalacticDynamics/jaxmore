@@ -157,6 +157,30 @@ result = bounded_while_loop(
 print(result)  # (Array(3, dtype=int32), Array(8, dtype=int32))
 ```
 
+### `loop` — one call, several ways to loop
+
+`jaxmore.loop` maps a function over the batch dimensions of its arguments. The
+strategy in `jaxmore.loop_strategies` decides how: `Vectorize`
+(`jnp.vectorize`), `VMap` (flatten, then `jax.vmap`), `Scan` (flatten, then
+`jax.lax.scan`, sequential and cheap in memory), `NoLoop`, or `Determine`
+(`Scan` on CPU, `Vectorize` elsewhere).
+
+```python
+import jax.numpy as jnp
+import jaxmore as jm
+from jaxmore import loop_strategies as ls
+
+
+def norm_t(x, t):
+    return jnp.linalg.norm(x) * t
+
+
+x = jnp.array([[3.0, 4.0], [6.0, 8.0]])
+t = jnp.array([1.0, 2.0])
+
+jm.loop(ls.Scan, norm_t, signature="(n),()->()")(x, t)  # [ 5., 20.]
+```
+
 ### `structured` — per-argument and per-return-value transformations
 
 `structured` is a decorator factory that applies user-supplied callables to
