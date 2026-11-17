@@ -79,6 +79,35 @@ class NNTrainer(AbstractScanNNTrainer):
         return (model, opt_state, key)
 
 
+def test_jit_matches_eager(data: tuple[Array, Array]) -> None:
+    """Jitted `run` trains the same model as the eager loop."""
+    X, y = data
+    optimizer = optax.adam(1e-2)
+
+    def make_step(carry: tuple, batch_inputs: tuple) -> tuple[Array, tuple]:
+        model, opt_state, key = carry
+        batch_mask, (X_batch, y_batch) = batch_inputs
+        loss, grads = eqx.filter_value_and_grad(_masked_mse)(
+            model, X_batch, y_batch, batch_mask
+        )
+        updates, opt_state = optimizer.update(grads, opt_state)
+        return loss, (eqx.apply_updates(model, updates), opt_state, key)
+
+    trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
+    carry, epoch_data = trainer.init(key=jr.key(0), X=X, y=y)
+    kw: dict[str, Any] = {"num_epochs": 5, "batch_size": 16, "key": jr.key(1)}
+    (m_jit, _, _), l_jit = trainer.run(carry, epoch_data, **kw)
+    (m_eager, _, _), l_eager = trainer.run(carry, epoch_data, jit=False, **kw)
+
+    assert jnp.allclose(l_jit, l_eager, rtol=1e-5)
+    close = jax.tree.map(
+        lambda a, b: jnp.allclose(a, b, atol=1e-5),
+        eqx.filter(m_jit, eqx.is_array),
+        eqx.filter(m_eager, eqx.is_array),
+    )
+    assert all(jax.tree.leaves(close))
+
+
 def test_end_to_end_training_reduces_loss(data: tuple[Array, Array]) -> None:
     """A full training run converges and leaves a usable model behind."""
     X, y = data

@@ -17,6 +17,8 @@ Major features include:
   platform), for pytree arguments and gufunc-style signatures.
 - `bounded_while_loop` — a reverse-mode-friendly, bounded `while_loop`
   implemented via `lax.scan`.
+- `filter_jit` — `jax.jit` that traces the array leaves of its arguments and
+  treats every other leaf as static, so no `static_argnums` are needed.
 - `structured` — a decorator that applies per-argument and per-return-value
   transformations at call time, in a structured, declarative way.
 - `nn` - additions for `jax.nn`
@@ -185,6 +187,29 @@ t = jnp.array([1.0, 2.0])
 
 jm.loop(ls.Scan, norm_t, signature="(n),()->()")(x, t)  # [ 5., 20.]
 ```
+
+### `filter_jit` — jit without `static_argnums`
+
+`jaxmore.filter_jit` flattens the arguments as pytrees. Array leaves are traced,
+and every other leaf (numbers, strings, functions) is static and part of the
+compile cache key. Non-array leaves can also be returned.
+
+```python
+import jax.numpy as jnp
+from jaxmore import filter_jit
+
+
+@filter_jit
+def scale(x, *, factor, label):
+    return {"label": label, "y": x * factor}
+
+
+scale(jnp.arange(3.0), factor=2, label="double")
+# {'label': 'double', 'y': Array([0., 2., 4.], dtype=float32)}
+```
+
+A static leaf that can't be hashed raises a `TypeError` naming it, or, with
+`filter_jit(fn, fallback="eager")`, makes that call run without jit.
 
 ### `structured` — per-argument and per-return-value transformations
 
@@ -444,6 +469,11 @@ Key features:
 - **Automatic batching** — `shuffle_and_batch()` handles shuffling and padding
 - **Efficient scanning** — Uses `jax.lax.scan` for epochs and batches
   (JAX-friendly)
+- **Compiled once** — `run` is jitted with `filter_jit`, so a repeat call with
+  the same shapes and settings reuses the compiled program. For that,
+  `make_step` and `loss_agg_fn` must compare equal across calls: use a
+  module-level function or `equinox.Partial`, not `functools.partial` or a fresh
+  lambda. Pass `jit=False` to run eagerly.
 - **Model partitioning** — Separate dynamic arrays (model weights) from static
   structure for efficient JIT compilation
 - **Loss aggregation** — Customize how per-batch losses combine into epoch

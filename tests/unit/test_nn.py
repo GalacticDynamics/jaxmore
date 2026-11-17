@@ -1,6 +1,9 @@
 """Unit tests for `jaxmore.nn`."""
 
 import inspect
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import jax
@@ -196,6 +199,12 @@ def test_show_pbar_defaults_to_false() -> None:
     """`jax_tqdm` is an optional extra, so the default path must not need it."""
     params = inspect.signature(AbstractScanNNTrainer.run).parameters
     assert params["show_pbar"].default is False
+
+
+def test_jit_defaults_to_true() -> None:
+    """`run` reuses its compiled program unless told not to."""
+    params = inspect.signature(AbstractScanNNTrainer.run).parameters
+    assert params["jit"].default is True
 
 
 # ============================================================================
@@ -451,3 +460,95 @@ def test_empty_batches_are_skipped() -> None:
     # aggregated. They are skipped, so the epoch losses stay finite.
     assert jnp.all(jnp.isfinite(losses)), f"NaN leaked from an empty batch: {losses}"
     assert jnp.allclose(losses, 1.0)
+
+
+# ============================================================================
+# AbstractScanNNTrainer -- compile cache
+# ============================================================================
+
+
+@contextmanager
+def count_compiles() -> Iterator[list[int]]:
+    """Count XLA backend compiles inside the block."""
+    count = [0]
+
+    def listener(event: str, _: float, **__: object) -> None:
+        if event == "/jax/core/compile/backend_compile_duration":
+            count[0] += 1
+
+    jax.monitoring.register_event_duration_secs_listener(listener)
+    try:
+        yield count
+    finally:
+        jax.monitoring.unregister_event_duration_listener(listener)
+
+
+def _sum_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
+    """Module-level, so it compares equal across `run` calls."""
+    batch_mask, (x,) = batch_inputs
+    return jnp.sum(jnp.where(batch_mask, x, 0.0)) + kw.get("offset", 0.0), carry
+
+
+@dataclass(frozen=True, slots=True)
+class _OffsetTrainer(_TrivialTrainer):
+    """Trainer with an array field, passed to `make_step` each epoch."""
+
+    offset: Array
+
+    def prepare_step_kw(self, /, **kw: Any) -> dict[str, Any]:
+        del kw
+        return {"offset": self.offset}
+
+
+def _run(trainer: AbstractScanNNTrainer, **kw: Any) -> Array:
+    carry, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    _, losses = trainer.run(
+        carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), **kw
+    )
+    return losses
+
+
+def test_run_reuses_compiled_program() -> None:
+    """A second identical `run` compiles nothing and gives the same result."""
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    first = _run(trainer)
+    with count_compiles() as n:
+        second = _run(trainer)
+    assert n[0] == 0
+    assert jnp.array_equal(first, second)
+
+
+def test_run_matches_eager() -> None:
+    """``jit=True`` and ``jit=False`` give the same losses."""
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    assert jnp.allclose(_run(trainer), _run(trainer, jit=False))
+
+
+def test_run_traces_array_fields() -> None:
+    """An array field is traced: a new value reuses the program and is used."""
+    _run(_OffsetTrainer(_sum_step, masked_mean, jnp.asarray(0.0)))
+    trainer = _OffsetTrainer(_sum_step, masked_mean, jnp.asarray(10.0))
+    eager = _run(trainer, jit=False)
+    with count_compiles() as n:
+        losses = _run(trainer)
+    assert n[0] == 0
+    assert jnp.allclose(losses, eager)
+    assert jnp.all(losses >= 10.0)
+
+
+def test_run_unhashable_static_part_runs_eagerly() -> None:
+    """A static part that can't be hashed falls back to eager, with no error."""
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    losses = _run(trainer, step_kw={"tags": {"unhashable"}})
+    assert jnp.allclose(losses, _run(trainer, jit=False))
+
+
+def test_run_show_pbar_under_jit() -> None:
+    """The jax_tqdm progress bar works under jit and on a cache hit."""
+    pytest.importorskip("jax_tqdm")
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    first = _run(trainer, show_pbar=True)
+    with count_compiles() as n:
+        second = _run(trainer, show_pbar=True)
+    assert n[0] == 0
+    assert jnp.allclose(first, second)
