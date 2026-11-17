@@ -50,28 +50,28 @@ def _call(dynamic: list[Any], static: _Static, /) -> tuple[list[Any], _Static]:
     return _partition(fn(*args, **kwargs))
 
 
+def _hashable(x: Any, /) -> bool:
+    try:
+        hash(x)
+    except TypeError:
+        return False
+    return True
+
+
 def _unhashable_error(fn: Any, args: Any, kwargs: Any, /) -> TypeError:
-    for name, tree in (("fn", fn), ("args", args), ("kwargs", kwargs)):
-        for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
-            if _is_array(leaf):
-                continue
-            try:
-                hash(leaf)
-            except TypeError:
-                where = (
-                    f"the static leaf {name}{jax.tree_util.keystr(path)} "
-                    f"of type {type(leaf).__qualname__!r}"
-                )
-                break
-        else:
-            continue
-        break
-    else:
-        where = "static metadata of a pytree node (e.g. a custom pytree's aux data)"
+    # A treedef's hash leaves out pytree aux data (its `==` compares it), so if
+    # the key won't hash, one of the static leaves won't.
+    tree = {"fn": fn, "args": args, "kwargs": kwargs}
+    path, leaf = next(
+        (p, x)
+        for p, x in jax.tree_util.tree_flatten_with_path(tree)[0]
+        if not _is_array(x) and not _hashable(x)
+    )
     msg = (
-        f"filter_jit: {where} is not hashable, so it can't be part of the "
-        "compile cache key. Make it hashable, pass it as an array, or use "
-        "`filter_jit(fn, fallback='eager')`."
+        f"filter_jit: the static leaf {path[0].key}"
+        f"{jax.tree_util.keystr(path[1:])} of type {type(leaf).__qualname__!r} "
+        "is not hashable, so it can't be part of the compile cache key. Make it "
+        "hashable, pass it as an array, or use `filter_jit(fn, fallback='eager')`."
     )
     return TypeError(msg)
 
