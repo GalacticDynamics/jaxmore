@@ -79,6 +79,13 @@ def test_numpy_string_scalars_are_static() -> None:
     assert jnp.allclose(f(jnp.zeros(2), np.str_("abc")), 3.0)
 
 
+def test_numpy_string_array_is_static() -> None:
+    """A NumPy array JAX can't trace is static, so it must be hashable."""
+    f = filter_jit(lambda x, labels: x + len(labels))
+    with pytest.raises(TypeError, match=r"args\[1\] of type 'ndarray'"):
+        f(jnp.zeros(2), np.array(["a", "b"]))
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))

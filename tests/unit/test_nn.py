@@ -609,3 +609,55 @@ def test_run_keeps_extra_slots_and_skips_unset_fields(*, jit: bool) -> None:
     assert jnp.allclose(_run(slotted, jit=jit), baseline + 5.0)
     unset = _UnsetFieldTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
     assert jnp.allclose(_run(unset, jit=jit), baseline)
+
+
+class _Holder:
+    """A plain carry class: not a pytree, hashed by identity."""
+
+    def __init__(self, w: Array) -> None:
+        self.w = w
+
+
+class _HolderTrainer(_TrivialTrainer):
+    def pack_carry_state(self, carry: Any) -> tuple[Any, Any]:
+        return (carry.w,), {}
+
+    def unpack_carry_state(self, carry: Any, static: Any) -> Any:
+        del static
+        return _Holder(carry[0])
+
+
+def _add_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
+    del kw
+    batch_mask, (x,) = batch_inputs
+    return jnp.sum(jnp.where(batch_mask, x, 0.0)), _Holder(carry.w + 1.0)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_unpacks_a_plain_carry_outside_jit(*, jit: bool) -> None:
+    """A carry that isn't a pytree comes back holding concrete arrays."""
+    trainer = _HolderTrainer(make_step=_add_step, loss_agg_fn=masked_mean)
+    _, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    for _ in range(2):  # the second call is a cache hit under jit
+        carry, _ = trainer.run(
+            _Holder(jnp.asarray(0.0)),
+            epoch_data,
+            num_epochs=2,
+            batch_size=2,
+            key=jr.key(1),
+            jit=jit,
+        )
+        assert jnp.allclose(carry.w + 1.0, 5.0)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_with_a_numpy_string_array_field(*, jit: bool) -> None:
+    """A NumPy array JAX can't trace stays static, so `run` falls back to eager."""
+    trainer = _LabelledTrainer(_sum_step, masked_mean, np.array(["a", "b"]))
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline)
+
+
+@dataclass(frozen=True, slots=True)
+class _LabelledTrainer(_TrivialTrainer):
+    labels: Any

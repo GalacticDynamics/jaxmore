@@ -781,7 +781,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             "show_pbar": show_pbar,
         }
         if not jit:
-            return _train_loop(self, initial_carry, epoch_data, **kw)
+            packed, carry_static, losses = _train_loop(
+                self, initial_carry, epoch_data, **kw
+            )
+            return self.unpack_carry_state(packed, carry_static), losses
         # Pass the trainer's stored state, not the trainer, so that `filter_jit`
         # traces array fields instead of hashing the trainer. The base
         # `object.__getstate__` gives the instance `__dict__` and every slot
@@ -790,7 +793,12 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         raw: Any = object.__getstate__(self)
         dict_state, slot_state = raw if isinstance(raw, tuple) else (raw, {})
         state = {**(dict_state or {}), **slot_state}
-        return _jit_train_loop(type(self), state, initial_carry, epoch_data, **kw)
+        packed, carry_static, losses = _jit_train_loop(
+            type(self), state, initial_carry, epoch_data, **kw
+        )
+        # Unpack outside the jitted loop, as 0.5.0 did, so a carry that isn't a
+        # pytree is built from concrete arrays rather than tracers.
+        return self.unpack_carry_state(packed, carry_static), losses
 
 
 def _train_loop(
@@ -804,8 +812,8 @@ def _train_loop(
     key: PRNGKeyArray,
     step_kw: Mapping[str, Any],
     show_pbar: bool,
-) -> tuple[Any, RealSzE]:
-    """Run the training loop of `AbstractScanNNTrainer.run`."""
+) -> tuple[Any, Any, RealSzE]:
+    """Run `AbstractScanNNTrainer.run`'s loop; return the packed final carry."""
     # Unpack epoch data
     mask, data_args = epoch_data
 
@@ -944,10 +952,8 @@ def _train_loop(
     epoch_inputs = (epoch_indices, epoch_keys)
     packed_final_carry, epoch_losses = lax.scan(scan_fn, packed_carry, epoch_inputs)
 
-    # Unpack the final carry
-    final_carry = trainer.unpack_carry_state(packed_final_carry, carry_static)
-
-    return final_carry, epoch_losses
+    # `run` unpacks the final carry, outside any jit.
+    return packed_final_carry, carry_static, epoch_losses
 
 
 def _rebuild_and_train(
@@ -956,7 +962,7 @@ def _rebuild_and_train(
     /,
     *args: Any,
     **kw: Any,
-) -> tuple[Any, RealSzE]:
+) -> tuple[Any, Any, RealSzE]:
     """Rebuild the trainer from its stored state, then run `_train_loop`.
 
     The attributes are set directly rather than through ``cls(**state)``, so

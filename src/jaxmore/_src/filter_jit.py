@@ -14,9 +14,15 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-# NumPy's numeric and bool scalars, not all of `np.generic`: JAX can't trace
-# `np.str_` or `np.bytes_`, so those stay static.
-_ARRAY_TYPES = (jax.Array, np.ndarray, np.number, np.bool_)
+_NUMPY_TYPES = (np.ndarray, np.generic)
+
+
+def _is_array(x: Any, /) -> bool:
+    # NumPy values count only when JAX can trace their dtype (bool, int, uint,
+    # float, complex). String, bytes, object and datetime ones stay static.
+    return isinstance(x, jax.Array) or (
+        isinstance(x, _NUMPY_TYPES) and x.dtype.kind in "biufc"
+    )
 
 
 @jax.tree_util.register_static
@@ -29,7 +35,7 @@ class _Static:
 
 def _partition(tree: Any, /) -> tuple[list[Any], _Static]:
     leaves, treedef = jax.tree.flatten(tree)
-    mask = [isinstance(x, _ARRAY_TYPES) for x in leaves]
+    mask = [_is_array(x) for x in leaves]
     dynamic = [x if m else None for x, m in zip(leaves, mask, strict=True)]
     static = tuple(None if m else x for x, m in zip(leaves, mask, strict=True))
     # The types go in the key too: `1 == 1.0 == True`, but they trace differently.
@@ -65,7 +71,7 @@ def _unhashable_error(fn: Any, args: Any, kwargs: Any, /) -> TypeError:
     path, leaf = next(
         (p, x)
         for p, x in jax.tree_util.tree_flatten_with_path(tree)[0]
-        if not isinstance(x, _ARRAY_TYPES) and not _hashable(x)
+        if not _is_array(x) and not _hashable(x)
     )
     msg = (
         f"filter_jit: the static leaf {path[0].key}"
@@ -81,8 +87,8 @@ def filter_jit(
 ) -> Callable[P, R]:
     """Jit-compile ``fn``, tracing array leaves and treating the rest as static.
 
-    All arguments are flattened as pytrees. Array leaves (`jax.Array`,
-    `numpy.ndarray`, and NumPy numeric and bool scalars) are traced. Every other
+    All arguments are flattened as pytrees. Array leaves (`jax.Array`, and NumPy
+    arrays and scalars with a numeric or bool dtype) are traced. Every other
     leaf (Python scalars, strings, functions, ...) is static: the compile cache
     is keyed on the pytree structure plus those leaves and their types. The
     leaves are compared with ``==``, as `jax.jit` compares ``static_argnums``,
@@ -90,7 +96,8 @@ def filter_jit(
     do, and so do two objects whose ``__eq__`` ignores a difference that changes
     the trace. The output may also hold non-array leaves; they are returned
     as-is. Array leaves of the output, NumPy scalars included, come back as JAX
-    arrays.
+    arrays. The output must be a pytree down to its arrays: an array held by an
+    object that isn't a pytree is still a tracer when it comes out.
 
     The wrapped function is part of the cache key, so a module-level function
     reuses its compiled program even when it is wrapped again on every call.
