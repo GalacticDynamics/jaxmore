@@ -14,20 +14,14 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-_NUMPY_TYPES = (np.ndarray, np.generic)
-
-
 def _is_array(x: Any, /) -> bool:
-    # Ask JAX, so a NumPy value is traced exactly when `jax.jit` accepts it.
-    # bfloat16 and int4 are; strings, datetimes, objects, and scalar types like
-    # `np.longdouble` aren't, so they stay static.
-    if isinstance(x, jax.Array):
-        return True
-    if not isinstance(x, _NUMPY_TYPES):
-        return False
+    # A NumPy value counts exactly when `jax.jit` accepts it: bfloat16 and int4
+    # do; strings, datetimes, objects and `np.longdouble` scalars don't. JAX's
+    # check raises on some values (e.g. masked arrays); those are static too.
     try:
-        return bool(jax.core.valid_jaxtype(x))
-    # e.g. it raises on NumPy masked arrays
+        return isinstance(x, jax.Array) or (
+            isinstance(x, np.ndarray | np.generic) and bool(jax.core.valid_jaxtype(x))
+        )
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         return False
 
@@ -42,9 +36,9 @@ class _Static:
 
 def _partition(tree: Any, /) -> tuple[list[Any], _Static]:
     leaves, treedef = jax.tree.flatten(tree)
-    mask = [_is_array(x) for x in leaves]
-    dynamic = [x if m else None for x, m in zip(leaves, mask, strict=True)]
-    static = tuple(None if m else x for x, m in zip(leaves, mask, strict=True))
+    # `None` marks the other list's slot: it is never a pytree leaf itself.
+    static = tuple(None if _is_array(x) else x for x in leaves)
+    dynamic = [x if s is None else None for x, s in zip(leaves, static, strict=True)]
     # The types go in the key too: `1 == 1.0 == True`, but they trace differently.
     # They come before the values, so values of different types are never
     # compared with each other.
@@ -74,22 +68,27 @@ def _hashable(x: Any, /) -> bool:
     return True
 
 
-def _unhashable_error(fn: Any, args: Any, kwargs: Any, /) -> TypeError:
-    # A treedef's hash leaves out pytree aux data (its `==` compares it), so if
-    # the key won't hash, one of the static leaves won't.
+def _cache_key_error(fn: Any, args: Any, kwargs: Any, e: Exception, /) -> TypeError:
+    # Name the unhashable static leaf. A treedef's hash leaves out pytree aux
+    # data, so when the key won't hash, a leaf won't; when the arguments won't
+    # flatten, there is no leaf to name and JAX's message says why.
     tree = {"fn": fn, "args": args, "kwargs": kwargs}
-    path, leaf = next(
-        (p, x)
-        for p, x in jax.tree_util.tree_flatten_with_path(tree)[0]
-        if not _is_array(x) and not _hashable(x)
-    )
-    msg = (
-        f"filter_jit: the static leaf {path[0].key}"
-        f"{jax.tree_util.keystr(path[1:])} of type {type(leaf).__qualname__!r} "
-        "is not hashable, so it can't be part of the compile cache key. Make it "
-        "hashable, pass it as an array, or use `filter_jit(fn, fallback='eager')`."
-    )
-    return TypeError(msg)
+    try:
+        path, leaf = next(
+            (p, x)
+            for p, x in jax.tree_util.tree_flatten_with_path(tree)[0]
+            if not _is_array(x) and not _hashable(x)
+        )
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        what = f"the arguments can't be flattened as pytrees: {e}"
+    else:
+        what = (
+            f"the static leaf {path[0].key}{jax.tree_util.keystr(path[1:])} of "
+            f"type {type(leaf).__qualname__!r} is not hashable, so it can't be "
+            "part of the compile cache key. Make it hashable, pass it as an "
+            "array, or use `filter_jit(fn, fallback='eager')`."
+        )
+    return TypeError(f"filter_jit: {what}")
 
 
 def filter_jit(
@@ -165,17 +164,14 @@ def filter_jit(
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
+            # Either step can fail: a dict whose keys can't be sorted won't
+            # flatten, and a `set` (or `np.timedelta64(5)`, a ValueError) won't hash.
             dynamic, static = _partition((fn, args, kwargs))
-        # e.g. a dict whose keys can't be sorted, which pytrees need.
+            hash(static)
         except Exception as e:  # pylint: disable=broad-exception-caught
             if fallback == "eager":
                 return fn(*args, **kwargs)
-            msg = f"filter_jit: the arguments can't be flattened as pytrees: {e}"
-            raise TypeError(msg) from e
-        if not _hashable(static):
-            if fallback == "eager":
-                return fn(*args, **kwargs)
-            raise _unhashable_error(fn, args, kwargs)
+            raise _cache_key_error(fn, args, kwargs, e) from e
         return _combine(*_call(dynamic, static))  # type: ignore[no-any-return]
 
     return wrapper

@@ -6,6 +6,7 @@ Neural network training utilities for JAX.
 __all__ = ("AbstractScanNNTrainer", "masked_mean", "shuffle_and_batch")
 
 import abc
+import functools
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -964,7 +965,10 @@ def _train_loop(
     return packed_final_carry, epoch_losses
 
 
-def _rebuild_and_train(
+# Unhashable static parts (e.g. a set, or a non-pytree object holding an array)
+# can't key the compile cache, so those calls run eagerly.
+@functools.partial(filter_jit, fallback="eager")
+def _jit_train_loop(
     cls: type[AbstractScanNNTrainer[Any, Any, Any]],
     state: dict[str, Any],
     /,
@@ -981,8 +985,3 @@ def _rebuild_and_train(
     for name, value in state.items():
         object.__setattr__(trainer, name, value)
     return _train_loop(trainer, *args, **kw)
-
-
-# Unhashable static parts (e.g. a set, or a non-pytree object holding an array)
-# can't key the compile cache, so those calls run eagerly, as before this jit.
-_jit_train_loop = filter_jit(_rebuild_and_train, fallback="eager")
