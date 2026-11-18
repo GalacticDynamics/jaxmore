@@ -82,8 +82,11 @@ def filter_jit(
     All arguments are flattened as pytrees. Array leaves (`jax.Array`,
     `numpy.ndarray`, `numpy.generic`) are traced. Every other leaf (Python
     scalars, strings, functions, ...) is static: the compile cache is keyed on
-    the pytree structure plus those leaves, compared by value (and type). The
-    output may also hold non-array leaves; they are returned as-is.
+    the pytree structure plus those leaves and their types. The leaves are
+    compared with ``==``, as `jax.jit` compares ``static_argnums``, so values
+    that compare equal share a compiled program: ``0.0`` and ``-0.0`` do, and so
+    do two objects whose ``__eq__`` ignores a difference that changes the
+    trace. The output may also hold non-array leaves; they are returned as-is.
 
     The wrapped function is part of the cache key, so a module-level function
     reuses its compiled program even when it is wrapped again on every call.

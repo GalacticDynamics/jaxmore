@@ -7,9 +7,10 @@ __all__ = ("AbstractScanNNTrainer", "masked_mean", "shuffle_and_batch")
 
 import abc
 import dataclasses
+import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeAlias, TypeVar
+from typing import Any, Generic, SupportsIndex, TypeAlias, TypeVar
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -564,8 +565,8 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         epoch_data: tuple[BoolSzN, tuple[Any, ...]],
         /,
         *,
-        num_epochs: int,
-        batch_size: int,
+        num_epochs: SupportsIndex,
+        batch_size: SupportsIndex,
         key: PRNGKeyArray,
         step_kw: Mapping[str, Any] | None = None,
         show_pbar: bool = False,
@@ -600,9 +601,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
               `self.make_step`.
 
         num_epochs : int
-            Number of training epochs.
+            Number of training epochs. Any integer with ``__index__`` works,
+            e.g. a NumPy integer; it is converted to a Python int.
         batch_size : int
-            Batch size for training.
+            Batch size for training. Converted to a Python int the same way.
         key : PRNGKeyArray
             JAX random key for shuffling and other randomness.
         step_kw : Mapping[str, Any] | None, optional
@@ -776,8 +778,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             fields,
             initial_carry,
             epoch_data,
-            num_epochs=num_epochs,
-            batch_size=batch_size,
+            # `filter_jit` traces NumPy scalars, but these set shapes, so they
+            # must be static Python ints.
+            num_epochs=operator.index(num_epochs),
+            batch_size=operator.index(batch_size),
             key=key,
             step_kw={} if step_kw is None else step_kw,
             show_pbar=show_pbar,

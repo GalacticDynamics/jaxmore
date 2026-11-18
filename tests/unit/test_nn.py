@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 from jaxtyping import Array, TypeCheckError
 
@@ -492,6 +493,22 @@ def _run(trainer: AbstractScanNNTrainer, **kw: Any) -> Array:
         carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), **kw
     )
     return losses
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_accepts_numpy_int_sizes(*, jit: bool) -> None:
+    """NumPy ints for `num_epochs` and `batch_size` work, as Python ints do."""
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    carry, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    _, losses = trainer.run(
+        carry,
+        epoch_data,
+        num_epochs=np.int64(2),
+        batch_size=np.int32(2),
+        key=jr.key(1),
+        jit=jit,
+    )
+    assert jnp.array_equal(losses, _run(trainer))
 
 
 def test_run_reuses_compiled_program(count_compiles: CountCompiles) -> None:
