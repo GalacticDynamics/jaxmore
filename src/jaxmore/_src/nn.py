@@ -619,9 +619,11 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             repeat call with the same shapes and static values reuses the
             compiled program instead of compiling again. The trainer goes in
             as a dict of its stored attributes, so array fields are traced.
-            Array leaves of ``step_kw`` and of the fields, NumPy scalars
-            included, are traced too, so Python control flow on them fails;
-            pass Python numbers for those, or use ``jit=False``. If a non-array
+            Array leaves of ``step_kw``, of the fields and of the carry, NumPy
+            scalars included, are traced too. That includes arrays your
+            `pack_carry_state` keeps in its static part. Python control flow
+            on any of them fails (e.g. ``x[: int(self.k)]``); pass Python
+            numbers for those, or use ``jit=False``. If a non-array
             part can't be hashed, the loop runs eagerly, with no error. Set
             False to always run eagerly.
 

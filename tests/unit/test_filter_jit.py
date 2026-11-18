@@ -86,6 +86,39 @@ def test_numpy_string_array_is_static() -> None:
         f(jnp.zeros(2), np.array(["a", "b"]))
 
 
+def test_numpy_bfloat16_is_traced(count_compiles: CountCompiles) -> None:
+    """JAX's extra dtypes (NumPy kind "V") are traced, like `jax.jit` does."""
+    ml_dtypes = pytest.importorskip("ml_dtypes")
+    f = filter_jit(lambda x: x * 2)
+    x = np.ones(2, ml_dtypes.bfloat16)
+    y = np.full(2, 3, ml_dtypes.bfloat16)
+    f(x)
+    with count_compiles() as n:
+        out = f(y)
+    assert n[0] == 0
+    assert jnp.allclose(out.astype(jnp.float32), 6.0)
+
+
+class _Picky:
+    """Hashable, but comparing it with another type raises."""
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _Picky):
+            msg = "compared with a different type"
+            raise TypeError(msg)
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+
+def test_static_types_are_compared_before_values() -> None:
+    """A static slot that changes type compiles again; values aren't compared."""
+    f = filter_jit(lambda x, tag: x + bool(tag))
+    f(jnp.zeros(1), "a")
+    assert jnp.allclose(f(jnp.zeros(1), _Picky()), 1.0)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))

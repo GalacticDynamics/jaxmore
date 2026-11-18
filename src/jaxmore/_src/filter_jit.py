@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, ParamSpec, TypeVar
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 P = ParamSpec("P")
@@ -18,11 +19,15 @@ _NUMPY_TYPES = (np.ndarray, np.generic)
 
 
 def _is_array(x: Any, /) -> bool:
-    # NumPy values count only when JAX can trace their dtype (bool, int, uint,
-    # float, complex). String, bytes, object and datetime ones stay static.
-    return isinstance(x, jax.Array) or (
-        isinstance(x, _NUMPY_TYPES) and x.dtype.kind in "biufc"
-    )
+    # NumPy values count only when JAX can trace their dtype: bool, int, uint,
+    # float, complex, and JAX's extra number types (bfloat16, float8, int4...),
+    # whose NumPy kind is "V". String, bytes, object and datetime ones stay static.
+    if isinstance(x, jax.Array):
+        return True
+    if not isinstance(x, _NUMPY_TYPES):
+        return False
+    kind = x.dtype.kind
+    return kind in "biufc" or (kind == "V" and jnp.issubdtype(x.dtype, jnp.number))
 
 
 @jax.tree_util.register_static
@@ -39,11 +44,13 @@ def _partition(tree: Any, /) -> tuple[list[Any], _Static]:
     dynamic = [x if m else None for x, m in zip(leaves, mask, strict=True)]
     static = tuple(None if m else x for x, m in zip(leaves, mask, strict=True))
     # The types go in the key too: `1 == 1.0 == True`, but they trace differently.
-    return dynamic, _Static((treedef, static, tuple(map(type, static))))
+    # They come before the values, so values of different types are never
+    # compared with each other.
+    return dynamic, _Static((treedef, tuple(map(type, static)), static))
 
 
 def _combine(dynamic: list[Any], static: _Static, /) -> Any:
-    treedef, leaves, _ = static.value
+    treedef, _, leaves = static.value
     merged = [s if d is None else d for d, s in zip(dynamic, leaves, strict=True)]
     return jax.tree.unflatten(treedef, merged)
 
@@ -88,16 +95,17 @@ def filter_jit(
     """Jit-compile ``fn``, tracing array leaves and treating the rest as static.
 
     All arguments are flattened as pytrees. Array leaves (`jax.Array`, and NumPy
-    arrays and scalars with a numeric or bool dtype) are traced. Every other
-    leaf (Python scalars, strings, functions, ...) is static: the compile cache
-    is keyed on the pytree structure plus those leaves and their types. The
-    leaves are compared with ``==``, as `jax.jit` compares ``static_argnums``,
-    so values that compare equal share a compiled program: ``0.0`` and ``-0.0``
-    do, and so do two objects whose ``__eq__`` ignores a difference that changes
-    the trace. The output may also hold non-array leaves; they are returned
-    as-is. Array leaves of the output, NumPy scalars included, come back as JAX
-    arrays. The output must be a pytree down to its arrays: an array held by an
-    object that isn't a pytree is still a tracer when it comes out.
+    arrays and scalars of a dtype JAX can trace: bool or a number type) are
+    traced. Every other leaf (Python scalars, strings, functions, ...) is
+    static: the compile cache is keyed on the pytree structure plus those
+    leaves and their types. The leaves are compared with ``==``, as `jax.jit`
+    compares ``static_argnums``, so values that compare equal share a compiled
+    program: ``0.0`` and ``-0.0`` do, and so do two objects whose ``__eq__``
+    ignores a difference that changes the trace. The output may also hold
+    non-array leaves; they are returned as-is. Array leaves of the output, NumPy
+    scalars included, come back as JAX arrays. The output must be a pytree down
+    to its arrays: an array held by an object that isn't a pytree is still a
+    tracer when it comes out.
 
     The wrapped function is part of the cache key, so a module-level function
     reuses its compiled program even when it is wrapped again on every call.
