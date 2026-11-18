@@ -18,14 +18,12 @@ def _is_array(x: Any, /) -> bool:
     return isinstance(x, jax.Array | np.ndarray | np.generic)
 
 
+@jax.tree_util.register_static
 @dataclass(frozen=True, slots=True)
 class _Static:
     """A leafless pytree node holding non-array values, compared by value."""
 
     value: Any
-
-
-jax.tree_util.register_static(_Static)
 
 
 def _partition(tree: Any, /) -> tuple[list[Any], _Static]:
