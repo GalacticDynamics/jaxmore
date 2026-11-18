@@ -17,10 +17,6 @@ R = TypeVar("R")
 _ARRAY_TYPES = (jax.Array, np.ndarray, np.generic)
 
 
-def _is_array(x: Any, /) -> bool:
-    return isinstance(x, _ARRAY_TYPES)
-
-
 @jax.tree_util.register_static
 @dataclass(frozen=True, slots=True)
 class _Static:
@@ -67,7 +63,7 @@ def _unhashable_error(fn: Any, args: Any, kwargs: Any, /) -> TypeError:
     path, leaf = next(
         (p, x)
         for p, x in jax.tree_util.tree_flatten_with_path(tree)[0]
-        if not _is_array(x) and not _hashable(x)
+        if not isinstance(x, _ARRAY_TYPES) and not _hashable(x)
     )
     msg = (
         f"filter_jit: the static leaf {path[0].key}"

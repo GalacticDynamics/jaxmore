@@ -282,7 +282,7 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
     - `unpack_carry_state(packed_arrays, static_metadata) -> carry`: Reconstruct
       the full carry after scanning.
 
-    The `_run` method implements the full training loop:
+    The `run` method implements the full training loop:
 
     1. **Epoch loop** (outer scan): iterates over epochs
     2. **Shuffle and batch** (per epoch): prepares batched data via

@@ -1,7 +1,7 @@
 """Unit tests for `jaxmore.filter_jit`."""
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import jax
 import jax.numpy as jnp
@@ -10,23 +10,7 @@ import pytest
 
 from jaxmore import filter_jit
 
-_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
-
-
-@contextmanager
-def count_compiles() -> Iterator[list[int]]:
-    """Count XLA backend compiles inside the block."""
-    count = [0]
-
-    def listener(event: str, _: float, **__: object) -> None:
-        if event == _COMPILE_EVENT:
-            count[0] += 1
-
-    jax.monitoring.register_event_duration_secs_listener(listener)
-    try:
-        yield count
-    finally:
-        jax.monitoring.unregister_event_duration_listener(listener)
+CountCompiles = Callable[[], AbstractContextManager[list[int]]]
 
 
 def _affine(x: jax.Array, a: float, *, op: str = "add") -> jax.Array:
@@ -40,7 +24,7 @@ def test_matches_jax_jit() -> None:
     assert jnp.allclose(filter_jit(fn)(x), jax.jit(fn)(x))
 
 
-def test_second_call_does_not_compile() -> None:
+def test_second_call_does_not_compile(count_compiles: CountCompiles) -> None:
     """A repeat call with the same shapes and static values reuses the program."""
     f = filter_jit(_affine)
     x = jnp.arange(4.0)
@@ -52,7 +36,7 @@ def test_second_call_does_not_compile() -> None:
     assert jnp.allclose(out, x2 * 2.0 - 1)
 
 
-def test_rewrapping_same_function_hits_cache() -> None:
+def test_rewrapping_same_function_hits_cache(count_compiles: CountCompiles) -> None:
     """The cache is keyed on `fn`, so wrapping it again still hits."""
     x = jnp.arange(3.0)
     filter_jit(_affine)(x, 3.0)
@@ -61,7 +45,7 @@ def test_rewrapping_same_function_hits_cache() -> None:
     assert n[0] == 0
 
 
-def test_static_scalars_and_strings() -> None:
+def test_static_scalars_and_strings(count_compiles: CountCompiles) -> None:
     """Python scalars and strings are static: new values recompile and are used."""
     f = filter_jit(_affine)
     x = jnp.arange(3.0)
@@ -79,7 +63,7 @@ def test_static_type_is_part_of_key() -> None:
     assert f(1.0).dtype == jnp.float32
 
 
-def test_numpy_leaves_are_traced() -> None:
+def test_numpy_leaves_are_traced(count_compiles: CountCompiles) -> None:
     """NumPy arrays and scalars are traced, not static."""
     f = filter_jit(lambda x, s: x + s)
     f(np.ones(3), np.float32(1.0))
@@ -89,7 +73,7 @@ def test_numpy_leaves_are_traced() -> None:
     assert jnp.allclose(out, 2.0)
 
 
-def test_non_array_outputs() -> None:
+def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))
     name, d, none = f(jnp.zeros(2), "hello")

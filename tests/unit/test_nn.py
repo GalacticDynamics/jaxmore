@@ -1,8 +1,8 @@
 """Unit tests for `jaxmore.nn`."""
 
 import inspect
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +13,8 @@ import pytest
 from jaxtyping import Array, TypeCheckError
 
 from jaxmore.nn import AbstractScanNNTrainer, masked_mean, shuffle_and_batch
+
+CountCompiles = Callable[[], AbstractContextManager[list[int]]]
 
 # ============================================================================
 # masked_mean
@@ -467,22 +469,6 @@ def test_empty_batches_are_skipped() -> None:
 # ============================================================================
 
 
-@contextmanager
-def count_compiles() -> Iterator[list[int]]:
-    """Count XLA backend compiles inside the block."""
-    count = [0]
-
-    def listener(event: str, _: float, **__: object) -> None:
-        if event == "/jax/core/compile/backend_compile_duration":
-            count[0] += 1
-
-    jax.monitoring.register_event_duration_secs_listener(listener)
-    try:
-        yield count
-    finally:
-        jax.monitoring.unregister_event_duration_listener(listener)
-
-
 def _sum_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
     """Module-level, so it compares equal across `run` calls."""
     batch_mask, (x,) = batch_inputs
@@ -508,7 +494,7 @@ def _run(trainer: AbstractScanNNTrainer, **kw: Any) -> Array:
     return losses
 
 
-def test_run_reuses_compiled_program() -> None:
+def test_run_reuses_compiled_program(count_compiles: CountCompiles) -> None:
     """A second identical `run` compiles nothing and gives the same result."""
     trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
     first = _run(trainer)
@@ -524,7 +510,7 @@ def test_run_matches_eager() -> None:
     assert jnp.allclose(_run(trainer), _run(trainer, jit=False))
 
 
-def test_run_traces_array_fields() -> None:
+def test_run_traces_array_fields(count_compiles: CountCompiles) -> None:
     """An array field is traced: a new value reuses the program and is used."""
     _run(_OffsetTrainer(_sum_step, masked_mean, jnp.asarray(0.0)))
     trainer = _OffsetTrainer(_sum_step, masked_mean, jnp.asarray(10.0))
@@ -543,7 +529,7 @@ def test_run_unhashable_static_part_runs_eagerly() -> None:
     assert jnp.allclose(losses, _run(trainer, jit=False))
 
 
-def test_run_show_pbar_under_jit() -> None:
+def test_run_show_pbar_under_jit(count_compiles: CountCompiles) -> None:
     """The jax_tqdm progress bar works under jit and on a cache hit."""
     pytest.importorskip("jax_tqdm")
     trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
