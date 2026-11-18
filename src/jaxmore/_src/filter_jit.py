@@ -89,7 +89,8 @@ def filter_jit(
     so values that compare equal share a compiled program: ``0.0`` and ``-0.0``
     do, and so do two objects whose ``__eq__`` ignores a difference that changes
     the trace. The output may also hold non-array leaves; they are returned
-    as-is.
+    as-is. Array leaves of the output, NumPy scalars included, come back as JAX
+    arrays.
 
     The wrapped function is part of the cache key, so a module-level function
     reuses its compiled program even when it is wrapped again on every call.

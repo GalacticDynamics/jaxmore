@@ -578,3 +578,34 @@ def test_run_keeps_initvar_and_init_false_state(*, jit: bool) -> None:
     trainer = _InitVarTrainer(_sum_step, masked_mean, scale=3.0)
     baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
     assert jnp.allclose(_run(trainer, jit=jit), baseline + 6.0)
+
+
+class _SlottedTrainer(_TrivialTrainer):
+    """Not a dataclass: adds a slot outside the dataclass fields."""
+
+    __slots__ = ("offset",)
+
+    def __init__(self, *args: Any, offset: float, **kw: Any) -> None:
+        super().__init__(*args, **kw)
+        object.__setattr__(self, "offset", offset)
+
+    def prepare_step_kw(self, /, **kw: Any) -> dict[str, Any]:
+        del kw
+        return {"offset": self.offset}
+
+
+@dataclass(frozen=True)
+class _UnsetFieldTrainer(_TrivialTrainer):
+    """An ``init=False`` field that is never set."""
+
+    lazy: int = field(init=False)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_keeps_extra_slots_and_skips_unset_fields(*, jit: bool) -> None:
+    """Extra slots carry over, and an unset field doesn't break `run`."""
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    slotted = _SlottedTrainer(_sum_step, masked_mean, offset=5.0)
+    assert jnp.allclose(_run(slotted, jit=jit), baseline + 5.0)
+    unset = _UnsetFieldTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    assert jnp.allclose(_run(unset, jit=jit), baseline)

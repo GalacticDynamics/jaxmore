@@ -6,7 +6,6 @@ Neural network training utilities for JAX.
 __all__ = ("AbstractScanNNTrainer", "masked_mean", "shuffle_and_batch")
 
 import abc
-import dataclasses
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -784,9 +783,13 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         if not jit:
             return _train_loop(self, initial_carry, epoch_data, **kw)
         # Pass the trainer's stored state, not the trainer, so that `filter_jit`
-        # traces array fields instead of hashing the trainer.
-        state = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
-        state |= getattr(self, "__dict__", {})
+        # traces array fields instead of hashing the trainer. The base
+        # `object.__getstate__` gives the instance `__dict__` and every slot
+        # that is set, across the MRO (a slotted dataclass's own `__getstate__`
+        # would give its fields only).
+        raw: Any = object.__getstate__(self)
+        dict_state, slot_state = raw if isinstance(raw, tuple) else (raw, {})
+        state = {**(dict_state or {}), **slot_state}
         return _jit_train_loop(type(self), state, initial_carry, epoch_data, **kw)
 
 
