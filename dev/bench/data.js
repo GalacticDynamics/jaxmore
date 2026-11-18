@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792709555256,
+  "lastUpdate": 1794983562862,
   "repoUrl": "https://github.com/GalacticDynamics/jaxmore",
   "entries": {
     "jaxmore Benchmarks": [
@@ -1984,6 +1984,163 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00002669313659063049",
             "extra": "mean: 523.2852800000778 usec\nrounds: 1275"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "nstarman@users.noreply.github.com",
+            "name": "Nathaniel Starkman",
+            "username": "nstarman"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "69525022f6793e2e9f75bdd4108a89fdf2b41378",
+          "message": "⚡️ perf(nn): jit `AbstractScanNNTrainer.run` with a new `jaxmore.filter_jit` (#38)\n\n* ✨ feat(filter_jit): add `filter_jit`, jit that traces arrays and keys on the rest\n\nArray leaves of the arguments are traced; every other leaf is static and\npart of the cache key, compared by value and type. Non-array outputs come\nback unchanged. Unhashable static leaves raise a TypeError naming the leaf,\nor run eagerly with `fallback=\"eager\"`. No equinox dependency.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* ⚡️ perf(nn): jit `AbstractScanNNTrainer.run` so repeat calls reuse the program\n\n`run` scanned eagerly with a closure built per call, so every call\nrecompiled. The loop is now a module-level function jitted with\n`filter_jit`; the trainer goes in as a dict of its fields, so array\nfields are traced. Unhashable static parts fall back to eager. Add\n`jit=False` to opt out.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* ♻️ refactor(filter_jit): drop the unreachable pytree-metadata error branch\n\nA treedef's hash leaves out pytree aux data, so an unhashable key always\nhas an unhashable static leaf. Find it with `next(...)` instead.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* 🎨 style(filter_jit): register `_Static` with the decorator form\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* ⚡️ perf(filter_jit): check each leaf once against a module-level type tuple\n\nBuilding `jax.Array | np.ndarray | np.generic` on every call and checking\neach leaf twice cost ~170 us for 200 leaves; now ~65 us.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* 🎨 style: inline `_is_array`, share `count_compiles`, fix a stale docstring\n\n- `_is_array` had one caller left; use `isinstance(x, _ARRAY_TYPES)`.\n- Move the duplicated compile-counting helper into a `tests/conftest.py`\n  fixture.\n- The class docstring named a `_run` method that doesn't exist; it's `run`.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-17T22:23:13-08:00",
+          "tree_id": "b22bb66cbd4498262e0b8db65e0972b8bcf1387f",
+          "url": "https://github.com/GalacticDynamics/jaxmore/commit/69525022f6793e2e9f75bdd4108a89fdf2b41378"
+        },
+        "date": 1794983562476,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop",
+            "value": 39.735350170434764,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004854079891533649",
+            "extra": "mean: 25.16650780000056 msec\nrounds: 40"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_scalar_loop_jit",
+            "value": 138113.9344398299,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014384067819240918",
+            "extra": "mean: 7.240399052100392 usec\nrounds: 31650"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_large_carry_jit[2000]",
+            "value": 49725.70138444178,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000029244406200409637",
+            "extra": "mean: 20.11032468438707 usec\nrounds: 21544"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_large_carry_jit[128000]",
+            "value": 28255.405840727683,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000038107549726953875",
+            "extra": "mean: 35.39145767846618 usec\nrounds: 15843"
+          },
+          {
+            "name": "tests/benchmark/test_bounded_while_loop.py::test_bench_early_exit_expensive_cond_jit",
+            "value": 2857.0210282538033,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009380486452426556",
+            "extra": "mean: 350.01492467529897 usec\nrounds: 2695"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_closure",
+            "value": 1229.6254842355258,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003435078858597629",
+            "extra": "mean: 813.2557537401015 usec\nrounds: 869"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_in_carry",
+            "value": 1217.3242563682127,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004127862752835298",
+            "extra": "mean: 821.4738142024855 usec\nrounds: 1028"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_optimizer_via_step_kw",
+            "value": 1201.3537053137247,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000905312837522882",
+            "extra": "mean: 832.394319488828 usec\nrounds: 939"
+          },
+          {
+            "name": "tests/benchmark/test_nn.py::test_bench_empty_batch_skipping",
+            "value": 1900.4827448036142,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007208683270488755",
+            "extra": "mean: 526.1820991188924 usec\nrounds: 1362"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_single_positional",
+            "value": 184258.18158635678,
+            "unit": "iter/sec",
+            "range": "stddev: 9.721997730285794e-7",
+            "extra": "mean: 5.427167420141544 usec\nrounds: 72775"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_two_positionals",
+            "value": 182536.32071504643,
+            "unit": "iter/sec",
+            "range": "stddev: 8.548786448733805e-7",
+            "extra": "mean: 5.478361764292811 usec\nrounds: 78377"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_fast_path_with_kwonly",
+            "value": 179348.53853879494,
+            "unit": "iter/sec",
+            "range": "stddev: 7.353966538653458e-7",
+            "extra": "mean: 5.575735426378675 usec\nrounds: 80522"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_outs_only",
+            "value": 359442.2607324316,
+            "unit": "iter/sec",
+            "range": "stddev: 5.400297553483315e-7",
+            "extra": "mean: 2.78208799923056 usec\nrounds: 150399"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_bind_free_pos_only",
+            "value": 189782.00498037058,
+            "unit": "iter/sec",
+            "range": "stddev: 7.671078355940224e-7",
+            "extra": "mean: 5.269203474288468 usec\nrounds: 85485"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_varargs_bind_free",
+            "value": 179636.7495029025,
+            "unit": "iter/sec",
+            "range": "stddev: 7.336917454884658e-7",
+            "extra": "mean: 5.566789661732565 usec\nrounds: 87055"
+          },
+          {
+            "name": "tests/benchmark/test_structured.py::test_bench_pos_only_default_omitted",
+            "value": 133785.55886187544,
+            "unit": "iter/sec",
+            "range": "stddev: 8.45792105292264e-7",
+            "extra": "mean: 7.474648299166821 usec\nrounds: 65351"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_static_path",
+            "value": 3520.9722874055374,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002006401631870504",
+            "extra": "mean: 284.01245973363217 usec\nrounds: 1577"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_kw_path",
+            "value": 2952.7717885291067,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015979829452113602",
+            "extra": "mean: 338.66484497203214 usec\nrounds: 1432"
+          },
+          {
+            "name": "tests/benchmark/test_vmap.py::test_bench_general_path",
+            "value": 3142.3718188473013,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013411164042673138",
+            "extra": "mean: 318.23095981265016 usec\nrounds: 1493"
           }
         ]
       }
