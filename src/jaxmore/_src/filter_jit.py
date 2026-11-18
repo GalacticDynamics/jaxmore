@@ -100,7 +100,9 @@ def filter_jit(
     All arguments are flattened as pytrees. Array leaves (`jax.Array`, and NumPy
     arrays and scalars that `jax.jit` accepts as arguments) are traced. Every
     other leaf (Python scalars, strings, functions, ...) is static: the compile
-    cache is keyed on the pytree structure plus those leaves and their types.
+    cache is keyed on the pytree structure plus those leaves and their types
+    (only the leaves' types: values in a pytree node's metadata, such as an
+    equinox static field, are compared by ``==`` alone).
     The leaves are compared with ``==``, as `jax.jit` compares
     ``static_argnums``, so values that compare equal share a compiled program:
     ``0.0`` and ``-0.0`` do, and so do two objects whose ``__eq__``
@@ -125,9 +127,10 @@ def filter_jit(
         The function to compile.
     fallback
         What to do when a static leaf can't be hashed, or the arguments can't
-        be flattened. ``"raise"`` (default)
-        raises a `TypeError` naming the leaf's path and type. ``"eager"``
-        calls ``fn`` without jit instead.
+        be flattened. ``"raise"`` (default) raises a `TypeError`: for an
+        unhashable leaf it names the leaf's path and type, and for a flatten
+        failure it includes JAX's message. ``"eager"`` calls ``fn`` without
+        jit instead.
 
     Returns
     -------

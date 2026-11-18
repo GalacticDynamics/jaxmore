@@ -295,10 +295,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
     ``run(..., jit=True)`` runs the loop under `jaxmore.filter_jit`, so repeat
     calls reuse the compiled program. It's off by default. For a cache hit,
-    `make_step`, `loss_agg_fn` and the static part of the carry must compare
-    equal across calls. Use a module-level
-    function or `equinox.Partial`, not `functools.partial` (it compares by
-    identity) or a lambda built per call.
+    `make_step`, `loss_agg_fn` and the carry's non-array leaves must compare
+    equal across calls. Use a module-level function or `equinox.Partial`, not
+    `functools.partial` (it compares by identity) or a lambda built per call.
 
     Note that `make_step` and `loss_agg_fn` are *constructor arguments*, not
     methods to override: you pass them in when instantiating the trainer. Only
