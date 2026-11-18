@@ -3,12 +3,14 @@
 import inspect
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 import pytest
 from jaxtyping import Array, TypeCheckError
 
@@ -203,10 +205,10 @@ def test_show_pbar_defaults_to_false() -> None:
     assert params["show_pbar"].default is False
 
 
-def test_jit_defaults_to_true() -> None:
-    """`run` reuses its compiled program unless told not to."""
+def test_jit_defaults_to_false() -> None:
+    """`run` runs eagerly, as in 0.5.0, unless asked to jit."""
     params = inspect.signature(AbstractScanNNTrainer.run).parameters
-    assert params["jit"].default is True
+    assert params["jit"].default is False
 
 
 # ============================================================================
@@ -486,12 +488,29 @@ class _OffsetTrainer(_TrivialTrainer):
         return {"offset": self.offset}
 
 
-def _run(trainer: AbstractScanNNTrainer, **kw: Any) -> Array:
+def _run(trainer: AbstractScanNNTrainer, *, jit: bool = True, **kw: Any) -> Array:
+    """Run a small training; jitted unless ``jit=False``."""
     carry, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
     _, losses = trainer.run(
-        carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), **kw
+        carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), jit=jit, **kw
     )
     return losses
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_accepts_numpy_int_sizes(*, jit: bool) -> None:
+    """NumPy ints for `num_epochs` and `batch_size` work, as Python ints do."""
+    trainer = _TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    carry, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    _, losses = trainer.run(
+        carry,
+        epoch_data,
+        num_epochs=np.int64(2),
+        batch_size=np.int32(2),
+        key=jr.key(1),
+        jit=jit,
+    )
+    assert jnp.array_equal(losses, _run(trainer))
 
 
 def test_run_reuses_compiled_program(count_compiles: CountCompiles) -> None:
@@ -538,3 +557,157 @@ def test_run_show_pbar_under_jit(count_compiles: CountCompiles) -> None:
         second = _run(trainer, show_pbar=True)
     assert n[0] == 0
     assert jnp.allclose(first, second)
+
+
+@dataclass(frozen=True)
+class _InitVarTrainer(_TrivialTrainer):
+    """State set in `__post_init__` from an ``InitVar``, read by a hook."""
+
+    scale: InitVar[float] = 1.0
+    offset: float = field(init=False)
+
+    def __post_init__(self, scale: float) -> None:
+        object.__setattr__(self, "offset", 2.0 * scale)
+
+    def prepare_step_kw(self, /, **kw: Any) -> dict[str, Any]:
+        del kw
+        return {"offset": self.offset}
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_keeps_initvar_and_init_false_state(*, jit: bool) -> None:
+    """`run` uses the trainer's stored state; it doesn't rebuild it with defaults."""
+    trainer = _InitVarTrainer(_sum_step, masked_mean, scale=3.0)
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline + 6.0)
+
+
+class _SlottedTrainer(_TrivialTrainer):
+    """Not a dataclass: adds a slot outside the dataclass fields."""
+
+    __slots__ = ("offset",)
+
+    def __init__(self, *args: Any, offset: float, **kw: Any) -> None:
+        super().__init__(*args, **kw)
+        object.__setattr__(self, "offset", offset)
+
+    def prepare_step_kw(self, /, **kw: Any) -> dict[str, Any]:
+        del kw
+        return {"offset": self.offset}
+
+
+@dataclass(frozen=True)
+class _UnsetFieldTrainer(_TrivialTrainer):
+    """An ``init=False`` field that is never set."""
+
+    lazy: int = field(init=False)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_keeps_extra_slots_and_skips_unset_fields(*, jit: bool) -> None:
+    """Extra slots carry over, and an unset field doesn't break `run`."""
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    slotted = _SlottedTrainer(_sum_step, masked_mean, offset=5.0)
+    assert jnp.allclose(_run(slotted, jit=jit), baseline + 5.0)
+    unset = _UnsetFieldTrainer(make_step=_sum_step, loss_agg_fn=masked_mean)
+    assert jnp.allclose(_run(unset, jit=jit), baseline)
+
+
+class _Holder:
+    """A plain carry class: not a pytree, hashed by identity."""
+
+    def __init__(self, w: Array) -> None:
+        self.w = w
+
+
+class _HolderTrainer(_TrivialTrainer):
+    def pack_carry_state(self, carry: Any) -> tuple[Any, Any]:
+        return (carry.w,), {}
+
+    def unpack_carry_state(self, carry: Any, static: Any) -> Any:
+        del static
+        return _Holder(carry[0])
+
+
+def _add_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
+    del kw
+    batch_mask, (x,) = batch_inputs
+    return jnp.sum(jnp.where(batch_mask, x, 0.0)), _Holder(carry.w + 1.0)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_unpacks_a_plain_carry_outside_jit(*, jit: bool) -> None:
+    """A carry that isn't a pytree comes back holding concrete arrays."""
+    trainer = _HolderTrainer(make_step=_add_step, loss_agg_fn=masked_mean)
+    _, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    for _ in range(2):  # the second call is a cache hit under jit
+        carry, _ = trainer.run(
+            _Holder(jnp.asarray(0.0)),
+            epoch_data,
+            num_epochs=2,
+            batch_size=2,
+            key=jr.key(1),
+            jit=jit,
+        )
+        assert jnp.allclose(carry.w + 1.0, 5.0)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_with_a_numpy_string_array_field(*, jit: bool) -> None:
+    """A NumPy array JAX can't trace stays static, so `run` falls back to eager."""
+    trainer = _LabelledTrainer(_sum_step, masked_mean, np.array(["a", "b"]))
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline)
+
+
+@dataclass(frozen=True, slots=True)
+class _LabelledTrainer(_TrivialTrainer):
+    labels: Any
+
+
+class _NamespaceStaticTrainer(_TrivialTrainer):
+    """The static part of the packed carry is a non-pytree built from an array."""
+
+    def pack_carry_state(self, carry: Any) -> tuple[Any, Any]:
+        w, scale = carry
+        return (w,), {"cfg": SimpleNamespace(scale=scale)}
+
+    def unpack_carry_state(self, carry: Any, static: Any) -> Any:
+        return (carry[0], static["cfg"].scale)
+
+
+def _scaled_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
+    del kw
+    w, scale = carry
+    batch_mask, (x,) = batch_inputs
+    return jnp.sum(jnp.where(batch_mask, x, 0.0)), (w + scale, scale)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_static_part_built_from_carry_arrays(*, jit: bool) -> None:
+    """A static part holding carry arrays comes back concrete, as in 0.5.0."""
+    trainer = _NamespaceStaticTrainer(make_step=_scaled_step, loss_agg_fn=masked_mean)
+    _, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    (w, scale), _ = trainer.run(
+        (jnp.asarray(0.0), jnp.asarray(2.0)),
+        epoch_data,
+        num_epochs=1,
+        batch_size=2,
+        key=jr.key(1),
+        jit=jit,
+    )
+    assert jnp.allclose(w, 4.0)
+    assert jnp.allclose(scale + 1.0, 3.0)
+
+
+@dataclass(frozen=True, slots=True)
+class _DictFieldTrainer(_TrivialTrainer):
+    extra: Any
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_with_an_unsortable_dict_field(*, jit: bool) -> None:
+    """A dict whose keys can't be sorted can't be flattened; `run` runs eagerly."""
+    trainer = _DictFieldTrainer(_sum_step, masked_mean, {1: 1.0, "b": 2.0})
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline)

@@ -73,6 +73,84 @@ def test_numpy_leaves_are_traced(count_compiles: CountCompiles) -> None:
     assert jnp.allclose(out, 2.0)
 
 
+def test_numpy_string_scalars_are_static() -> None:
+    """`np.str_` can't be traced, so it is static like a Python string."""
+    f = filter_jit(lambda x, label: x + len(label))
+    assert jnp.allclose(f(jnp.zeros(2), np.str_("abc")), 3.0)
+
+
+def test_numpy_string_array_is_static() -> None:
+    """A NumPy array JAX can't trace is static, so it must be hashable."""
+    f = filter_jit(lambda x, labels: x + len(labels))
+    with pytest.raises(TypeError, match=r"args\[1\] of type 'ndarray'"):
+        f(jnp.zeros(2), np.array(["a", "b"]))
+
+
+def test_numpy_bfloat16_is_traced(count_compiles: CountCompiles) -> None:
+    """JAX's extra dtypes (NumPy kind "V") are traced, like `jax.jit` does."""
+    ml_dtypes = pytest.importorskip("ml_dtypes")
+    f = filter_jit(lambda x: x * 2)
+    x = np.ones(2, ml_dtypes.bfloat16)
+    y = np.full(2, 3, ml_dtypes.bfloat16)
+    f(x)
+    with count_compiles() as n:
+        out = f(y)
+    assert n[0] == 0
+    assert jnp.allclose(out.astype(jnp.float32), 6.0)
+
+
+class _Picky:
+    """Hashable, but comparing it with another type raises."""
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _Picky):
+            msg = "compared with a different type"
+            raise TypeError(msg)
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+
+def test_static_types_are_compared_before_values() -> None:
+    """A static slot that changes type compiles again; values aren't compared."""
+    f = filter_jit(lambda x, tag: x + bool(tag))
+    f(jnp.zeros(1), "a")
+    assert jnp.allclose(f(jnp.zeros(1), _Picky()), 1.0)
+
+
+@pytest.mark.parametrize("scalar", [np.longdouble(1.5), np.ulonglong(3)])
+def test_numpy_scalars_jit_rejects_are_static(scalar: np.generic) -> None:
+    """NumPy scalar types `jax.jit` won't take as arguments stay static."""
+    if jax.core.valid_jaxtype(scalar):  # e.g. `np.ulonglong` is `np.uint64` on Windows
+        pytest.skip(f"jax.jit accepts {type(scalar).__name__} on this platform")
+    f = filter_jit(lambda x, s: (x * float(s), s))
+    y, s = f(jnp.ones(()), scalar)
+    assert jnp.allclose(y, float(scalar))
+    assert type(s) is type(scalar)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [np.timedelta64(5), np.ma.array([1.0], mask=[True])],
+    ids=["hash-raises-ValueError", "masked-array"],
+)
+def test_odd_static_values_fall_back_or_raise_typeerror(value: object) -> None:
+    """Any failure to trace or hash takes the fallback, or raises TypeError."""
+    f = filter_jit(lambda x, *_: x, fallback="eager")
+    assert jnp.allclose(f(jnp.ones(2), value), 1.0)
+    with pytest.raises(TypeError, match="is not hashable"):
+        filter_jit(lambda x, *_: x)(jnp.ones(2), value)
+
+
+def test_unflattenable_arguments() -> None:
+    """Arguments that can't be flattened take the fallback, or raise TypeError."""
+    unsortable = {1: 1.0, "b": 2.0}
+    assert filter_jit(lambda d: len(d), fallback="eager")(unsortable) == 2
+    with pytest.raises(TypeError, match="can't be flattened"):
+        filter_jit(lambda d: len(d))(unsortable)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))
