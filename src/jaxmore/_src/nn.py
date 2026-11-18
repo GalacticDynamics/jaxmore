@@ -465,6 +465,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         The default implementation is a no-op that returns `data_args` unchanged.
 
+        With ``run(jit=True)`` (the default) `data_args` holds traced arrays,
+        so use `jax.numpy`, not NumPy or Python control flow on their values.
+
         Parameters
         ----------
         carry : CarryT
@@ -619,11 +622,13 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             repeat call with the same shapes and static values reuses the
             compiled program instead of compiling again. The trainer goes in
             as a dict of its stored attributes, so array fields are traced.
-            Array leaves of ``step_kw``, of the fields and of the carry, NumPy
-            scalars included, are traced too. That includes arrays your
-            `pack_carry_state` keeps in its static part. Python control flow
-            on any of them fails (e.g. ``x[: int(self.k)]``); pass Python
-            numbers for those, or use ``jit=False``. If a non-array
+            Array leaves of ``epoch_data``, ``step_kw``, the fields and the
+            carry, NumPy scalars included, are traced too. That includes
+            arrays your `pack_carry_state` keeps in its static part, and the
+            ``data_args`` that `prepare_data_args` receives. Python control
+            flow or NumPy calls on any of them fail (e.g. ``x[: int(self.k)]``
+            or ``np.asarray(x)``); pass Python numbers for those, or use
+            ``jit=False``. If a non-array
             part can't be hashed, the loop runs eagerly, with no error. Set
             False to always run eagerly.
 
