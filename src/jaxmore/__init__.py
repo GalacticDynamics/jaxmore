@@ -3,6 +3,7 @@
 __all__ = (
     "bounded_while_loop",
     "error_if",
+    "filter_jit",
     "loop",
     "loop_strategies",
     "nn",
@@ -12,4 +13,4 @@ __all__ = (
 
 
 from . import loop_strategies, nn
-from ._src import bounded_while_loop, error_if, loop, structured, vmap
+from ._src import bounded_while_loop, error_if, filter_jit, loop, structured, vmap
