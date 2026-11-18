@@ -782,24 +782,24 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             "step_kw": {} if step_kw is None else step_kw,
             "show_pbar": show_pbar,
         }
-        if not jit:
-            packed, carry_static, losses = _train_loop(
-                self, initial_carry, epoch_data, **kw
+        if jit:
+            # Pass the trainer's stored state, not the trainer, so that
+            # `filter_jit` traces array fields instead of hashing the trainer.
+            # The base `object.__getstate__` gives the instance `__dict__` and
+            # every slot that is set, across the MRO (a slotted dataclass's own
+            # `__getstate__` would give its fields only).
+            raw: Any = object.__getstate__(self)
+            dict_state, slot_state = raw if isinstance(raw, tuple) else (raw, {})
+            state = {**(dict_state or {}), **slot_state}
+            packed, losses = _jit_train_loop(
+                type(self), state, initial_carry, epoch_data, **kw
             )
-            return self.unpack_carry_state(packed, carry_static), losses
-        # Pass the trainer's stored state, not the trainer, so that `filter_jit`
-        # traces array fields instead of hashing the trainer. The base
-        # `object.__getstate__` gives the instance `__dict__` and every slot
-        # that is set, across the MRO (a slotted dataclass's own `__getstate__`
-        # would give its fields only).
-        raw: Any = object.__getstate__(self)
-        dict_state, slot_state = raw if isinstance(raw, tuple) else (raw, {})
-        state = {**(dict_state or {}), **slot_state}
-        packed, carry_static, losses = _jit_train_loop(
-            type(self), state, initial_carry, epoch_data, **kw
-        )
-        # Unpack outside the jitted loop, as 0.5.0 did, so a carry that isn't a
-        # pytree is built from concrete arrays rather than tracers.
+        else:
+            packed, losses = _train_loop(self, initial_carry, epoch_data, **kw)
+        # Unpack outside the jitted loop, with the static part packed from the
+        # concrete initial carry, as 0.5.0 did: a carry or static part that
+        # isn't a pytree is then built from concrete arrays, not tracers.
+        _, carry_static = self.pack_carry_state(initial_carry)
         return self.unpack_carry_state(packed, carry_static), losses
 
 
@@ -814,7 +814,7 @@ def _train_loop(
     key: PRNGKeyArray,
     step_kw: Mapping[str, Any],
     show_pbar: bool,
-) -> tuple[Any, Any, RealSzE]:
+) -> tuple[Any, RealSzE]:
     """Run `AbstractScanNNTrainer.run`'s loop; return the packed final carry."""
     # Unpack epoch data
     mask, data_args = epoch_data
@@ -955,7 +955,7 @@ def _train_loop(
     packed_final_carry, epoch_losses = lax.scan(scan_fn, packed_carry, epoch_inputs)
 
     # `run` unpacks the final carry, outside any jit.
-    return packed_final_carry, carry_static, epoch_losses
+    return packed_final_carry, epoch_losses
 
 
 def _rebuild_and_train(
@@ -964,7 +964,7 @@ def _rebuild_and_train(
     /,
     *args: Any,
     **kw: Any,
-) -> tuple[Any, Any, RealSzE]:
+) -> tuple[Any, RealSzE]:
     """Rebuild the trainer from its stored state, then run `_train_loop`.
 
     The attributes are set directly rather than through ``cls(**state)``, so

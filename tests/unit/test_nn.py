@@ -4,6 +4,7 @@ import inspect
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import InitVar, dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import jax
@@ -661,3 +662,38 @@ def test_run_with_a_numpy_string_array_field(*, jit: bool) -> None:
 @dataclass(frozen=True, slots=True)
 class _LabelledTrainer(_TrivialTrainer):
     labels: Any
+
+
+class _NamespaceStaticTrainer(_TrivialTrainer):
+    """The static part of the packed carry is a non-pytree built from an array."""
+
+    def pack_carry_state(self, carry: Any) -> tuple[Any, Any]:
+        w, scale = carry
+        return (w,), {"cfg": SimpleNamespace(scale=scale)}
+
+    def unpack_carry_state(self, carry: Any, static: Any) -> Any:
+        return (carry[0], static["cfg"].scale)
+
+
+def _scaled_step(carry: Any, batch_inputs: tuple, **kw: Any) -> tuple[Array, Any]:
+    del kw
+    w, scale = carry
+    batch_mask, (x,) = batch_inputs
+    return jnp.sum(jnp.where(batch_mask, x, 0.0)), (w + scale, scale)
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_static_part_built_from_carry_arrays(*, jit: bool) -> None:
+    """A static part holding carry arrays comes back concrete, as in 0.5.0."""
+    trainer = _NamespaceStaticTrainer(make_step=_scaled_step, loss_agg_fn=masked_mean)
+    _, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
+    (w, scale), _ = trainer.run(
+        (jnp.asarray(0.0), jnp.asarray(2.0)),
+        epoch_data,
+        num_epochs=1,
+        batch_size=2,
+        key=jr.key(1),
+        jit=jit,
+    )
+    assert jnp.allclose(w, 4.0)
+    assert jnp.allclose(scale + 1.0, 3.0)
