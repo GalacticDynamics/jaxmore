@@ -697,3 +697,16 @@ def test_run_static_part_built_from_carry_arrays(*, jit: bool) -> None:
     )
     assert jnp.allclose(w, 4.0)
     assert jnp.allclose(scale + 1.0, 3.0)
+
+
+@dataclass(frozen=True, slots=True)
+class _DictFieldTrainer(_TrivialTrainer):
+    extra: Any
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_with_an_unsortable_dict_field(*, jit: bool) -> None:
+    """A dict whose keys can't be sorted can't be flattened; `run` runs eagerly."""
+    trainer = _DictFieldTrainer(_sum_step, masked_mean, {1: 1.0, "b": 2.0})
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline)

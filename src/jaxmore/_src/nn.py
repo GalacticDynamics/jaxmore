@@ -629,7 +629,8 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             flow or NumPy calls on any of them fail (e.g. ``x[: int(self.k)]``
             or ``np.asarray(x)``); pass Python numbers for those, or use
             ``jit=False``. If a non-array
-            part can't be hashed, the loop runs eagerly, with no error. Set
+            part can't be hashed or flattened, the loop runs eagerly, with
+            no error. Set
             False to always run eagerly.
 
         Returns
@@ -696,7 +697,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         carry, ``step_kw``, ``num_epochs`` and ``batch_size``. Functions compare
         by identity, so pass a module-level function or an `equinox.Partial`,
         not a `functools.partial` or a lambda built on every call. Otherwise
-        each call compiles again, as it would with ``jit=False``.
+        each call compiles again, as it would with ``jit=False``. Values read
+        from such parts are compiled in: if a config object that compares by
+        identity changes between calls, a cache hit still uses the old values.
 
         The carry is packed and unpacked around each epoch to isolate the
         trainable parameters from static structure, enabling efficient scanning.

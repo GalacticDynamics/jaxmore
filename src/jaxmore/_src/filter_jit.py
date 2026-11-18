@@ -115,14 +115,17 @@ def filter_jit(
     For a cache hit, every static leaf must compare equal to the one from the
     earlier call. Functions compare by identity, so use a module-level
     function or `equinox.Partial` rather than `functools.partial` or a lambda
-    built per call.
+    built per call. Values read from a static object are part of the compiled
+    program: if an object that compares by identity changes between calls,
+    a cache hit still uses the old values.
 
     Parameters
     ----------
     fn
         The function to compile.
     fallback
-        What to do when a static leaf can't be hashed. ``"raise"`` (default)
+        What to do when a static leaf can't be hashed, or the arguments can't
+        be flattened. ``"raise"`` (default)
         raises a `TypeError` naming the leaf's path and type. ``"eager"``
         calls ``fn`` without jit instead.
 
@@ -158,7 +161,14 @@ def filter_jit(
 
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        dynamic, static = _partition((fn, args, kwargs))
+        try:
+            dynamic, static = _partition((fn, args, kwargs))
+        # e.g. a dict whose keys can't be sorted, which pytrees need.
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            if fallback == "eager":
+                return fn(*args, **kwargs)
+            msg = f"filter_jit: the arguments can't be flattened as pytrees: {e}"
+            raise TypeError(msg) from e
         if not _hashable(static):
             if fallback == "eager":
                 return fn(*args, **kwargs)

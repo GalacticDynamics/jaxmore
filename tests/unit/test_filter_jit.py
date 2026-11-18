@@ -143,6 +143,14 @@ def test_odd_static_values_fall_back_or_raise_typeerror(value: object) -> None:
         filter_jit(lambda x, *_: x)(jnp.ones(2), value)
 
 
+def test_unflattenable_arguments() -> None:
+    """Arguments that can't be flattened take the fallback, or raise TypeError."""
+    unsortable = {1: 1.0, "b": 2.0}
+    assert filter_jit(lambda d: len(d), fallback="eager")(unsortable) == 2
+    with pytest.raises(TypeError, match="can't be flattened"):
+        filter_jit(lambda d: len(d))(unsortable)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))
