@@ -14,8 +14,11 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+_ARRAY_TYPES = (jax.Array, np.ndarray, np.generic)
+
+
 def _is_array(x: Any, /) -> bool:
-    return isinstance(x, jax.Array | np.ndarray | np.generic)
+    return isinstance(x, _ARRAY_TYPES)
 
 
 @jax.tree_util.register_static
@@ -28,8 +31,9 @@ class _Static:
 
 def _partition(tree: Any, /) -> tuple[list[Any], _Static]:
     leaves, treedef = jax.tree.flatten(tree)
-    dynamic = [x if _is_array(x) else None for x in leaves]
-    static = tuple(None if _is_array(x) else x for x in leaves)
+    mask = [isinstance(x, _ARRAY_TYPES) for x in leaves]
+    dynamic = [x if m else None for x, m in zip(leaves, mask, strict=True)]
+    static = tuple(None if m else x for x, m in zip(leaves, mask, strict=True))
     # The types go in the key too: `1 == 1.0 == True`, but they trace differently.
     return dynamic, _Static((treedef, static, tuple(map(type, static))))
 
