@@ -293,9 +293,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
     5. **Loss aggregation** (per epoch): aggregates batch losses into epoch
        loss via the provided `loss_agg_fn`
 
-    `run` is jitted with `jaxmore.filter_jit` by default, so repeat calls reuse
-    the compiled program. For that, `make_step`, `loss_agg_fn` and the static
-    part of the carry must compare equal across calls. Use a module-level
+    ``run(..., jit=True)`` runs the loop under `jaxmore.filter_jit`, so repeat
+    calls reuse the compiled program. It's off by default. For a cache hit,
+    `make_step`, `loss_agg_fn` and the static part of the carry must compare
+    equal across calls. Use a module-level
     function or `equinox.Partial`, not `functools.partial` (it compares by
     identity) or a lambda built per call.
 
@@ -465,7 +466,7 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         The default implementation is a no-op that returns `data_args` unchanged.
 
-        With ``run(jit=True)`` (the default) `data_args` holds traced arrays,
+        With ``run(jit=True)``, `data_args` holds traced arrays,
         so use `jax.numpy`, not NumPy or Python control flow on their values.
 
         Parameters
@@ -572,7 +573,7 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         key: PRNGKeyArray,
         step_kw: Mapping[str, Any] | None = None,
         show_pbar: bool = False,
-        jit: bool = True,
+        jit: bool = False,
     ) -> tuple[CarryT, RealSzE]:
         r"""Run the training loop over epochs with efficient batching and scanning.
 
@@ -618,20 +619,18 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             into: install it with the ``tqdm`` extra (e.g. ``pip install
             'jaxmore[tqdm]'``). Passing True without it raises `ImportError`.
         jit : bool, optional
-            If True (default), run the loop under `jaxmore.filter_jit`, so a
-            repeat call with the same shapes and static values reuses the
-            compiled program instead of compiling again. The trainer goes in
-            as a dict of its stored attributes, so array fields are traced.
-            Array leaves of ``epoch_data``, ``step_kw``, the fields and the
-            carry, NumPy scalars included, are traced too. That includes
-            arrays your `pack_carry_state` keeps in its static part, and the
-            ``data_args`` that `prepare_data_args` receives. Python control
-            flow or NumPy calls on any of them fail (e.g. ``x[: int(self.k)]``
-            or ``np.asarray(x)``); pass Python numbers for those, or use
-            ``jit=False``. If a non-array
-            part can't be hashed or flattened, the loop runs eagerly, with
-            no error. Set
-            False to always run eagerly.
+            If True, run the loop under `jaxmore.filter_jit`, so a repeat call
+            with the same shapes and static values reuses the compiled program
+            instead of compiling again. Default: False, which runs the loop
+            eagerly. The trainer goes in as a dict of its stored attributes,
+            so array fields are traced. Array leaves of ``epoch_data``,
+            ``step_kw``, the fields and the carry, NumPy scalars included, are
+            traced too. That includes arrays your `pack_carry_state` keeps in
+            its static part, and the ``data_args`` that `prepare_data_args`
+            receives. Python control flow or NumPy calls on any of them fail
+            (e.g. ``x[: int(self.k)]`` or ``np.asarray(x)``); pass Python
+            numbers for those, or leave ``jit`` off. If a non-array part can't
+            be hashed or flattened, the loop runs eagerly, with no error.
 
         Returns
         -------

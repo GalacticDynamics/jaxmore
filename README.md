@@ -500,11 +500,11 @@ Key features:
 - **Automatic batching** — `shuffle_and_batch()` handles shuffling and padding
 - **Efficient scanning** — Uses `jax.lax.scan` for epochs and batches
   (JAX-friendly)
-- **Compiled once** — `run` is jitted with `filter_jit`, so a repeat call with
-  the same shapes and settings reuses the compiled program. For that,
-  `make_step` and `loss_agg_fn` must compare equal across calls: use a
-  module-level function or `equinox.Partial`, not `functools.partial` or a fresh
-  lambda. Pass `jit=False` to run eagerly.
+- **Compiled once, opt-in** — `run(..., jit=True)` jits the loop with
+  `filter_jit`, so a repeat call with the same shapes and settings reuses the
+  compiled program. For that, `make_step` and `loss_agg_fn` must compare equal
+  across calls: use a module-level function or `equinox.Partial`, not
+  `functools.partial` or a fresh lambda. By default `run` runs eagerly.
 - **Model partitioning** — Separate dynamic arrays (model weights) from static
   structure for efficient JIT compilation
 - **Loss aggregation** — Customize how per-batch losses combine into epoch

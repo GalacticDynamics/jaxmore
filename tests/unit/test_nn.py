@@ -205,10 +205,10 @@ def test_show_pbar_defaults_to_false() -> None:
     assert params["show_pbar"].default is False
 
 
-def test_jit_defaults_to_true() -> None:
-    """`run` reuses its compiled program unless told not to."""
+def test_jit_defaults_to_false() -> None:
+    """`run` runs eagerly, as in 0.5.0, unless asked to jit."""
     params = inspect.signature(AbstractScanNNTrainer.run).parameters
-    assert params["jit"].default is True
+    assert params["jit"].default is False
 
 
 # ============================================================================
@@ -488,10 +488,11 @@ class _OffsetTrainer(_TrivialTrainer):
         return {"offset": self.offset}
 
 
-def _run(trainer: AbstractScanNNTrainer, **kw: Any) -> Array:
+def _run(trainer: AbstractScanNNTrainer, *, jit: bool = True, **kw: Any) -> Array:
+    """Run a small training; jitted unless ``jit=False``."""
     carry, epoch_data = trainer.init(key=jr.key(0), X=jnp.arange(4.0))
     _, losses = trainer.run(
-        carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), **kw
+        carry, epoch_data, num_epochs=2, batch_size=2, key=jr.key(1), jit=jit, **kw
     )
     return losses
 

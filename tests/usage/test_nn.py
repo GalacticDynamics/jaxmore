@@ -96,7 +96,7 @@ def test_jit_matches_eager(data: tuple[Array, Array]) -> None:
     trainer = NNTrainer(make_step=make_step, loss_agg_fn=masked_mean)
     carry, epoch_data = trainer.init(key=jr.key(0), X=X, y=y)
     kw: dict[str, Any] = {"num_epochs": 5, "batch_size": 16, "key": jr.key(1)}
-    (m_jit, _, _), l_jit = trainer.run(carry, epoch_data, **kw)
+    (m_jit, _, _), l_jit = trainer.run(carry, epoch_data, jit=True, **kw)
     (m_eager, _, _), l_eager = trainer.run(carry, epoch_data, jit=False, **kw)
 
     assert jnp.allclose(l_jit, l_eager, rtol=1e-5)
