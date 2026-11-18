@@ -212,8 +212,8 @@ A static leaf that can't be hashed raises a `TypeError` naming it, or, with
 `filter_jit(fn, fallback="eager")`, makes that call run without jit.
 
 This is the same split as `equinox.filter_jit` with its default filter, without
-the equinox dependency. NumPy arrays and NumPy scalars such as `np.float32(1.0)`
-are traced too, like JAX arrays.
+the equinox dependency. NumPy arrays and numeric NumPy scalars such as
+`np.float32(1.0)` are traced too, like JAX arrays.
 
 **When a call compiles again.** A call reuses an earlier compiled program when
 the array leaves have the same shapes and dtypes, and every static leaf compares

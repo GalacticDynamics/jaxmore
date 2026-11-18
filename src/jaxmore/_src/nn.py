@@ -619,7 +619,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             If True (default), run the loop under `jaxmore.filter_jit`, so a
             repeat call with the same shapes and static values reuses the
             compiled program instead of compiling again. The trainer goes in
-            as a dict of its fields, so array fields are traced. If a non-array
+            as a dict of its stored attributes, so array fields are traced.
+            Array leaves of ``step_kw`` and of the fields, NumPy scalars
+            included, are traced too, so Python control flow on them fails;
+            pass Python numbers for those, or use ``jit=False``. If a non-array
             part can't be hashed, the loop runs eagerly, with no error. Set
             False to always run eagerly.
 
@@ -769,28 +772,26 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         (True, True)
 
         """
-        fields = {
-            f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.init
-        }
-        loop = _jit_train_loop if jit else _train_loop
-        return loop(
-            type(self),
-            fields,
-            initial_carry,
-            epoch_data,
+        kw: dict[str, Any] = {
             # `filter_jit` traces NumPy scalars, but these set shapes, so they
             # must be static Python ints.
-            num_epochs=operator.index(num_epochs),
-            batch_size=operator.index(batch_size),
-            key=key,
-            step_kw={} if step_kw is None else step_kw,
-            show_pbar=show_pbar,
-        )
+            "num_epochs": operator.index(num_epochs),
+            "batch_size": operator.index(batch_size),
+            "key": key,
+            "step_kw": {} if step_kw is None else step_kw,
+            "show_pbar": show_pbar,
+        }
+        if not jit:
+            return _train_loop(self, initial_carry, epoch_data, **kw)
+        # Pass the trainer's stored state, not the trainer, so that `filter_jit`
+        # traces array fields instead of hashing the trainer.
+        state = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
+        state |= getattr(self, "__dict__", {})
+        return _jit_train_loop(type(self), state, initial_carry, epoch_data, **kw)
 
 
 def _train_loop(
-    cls: type[AbstractScanNNTrainer[Any, Any, Any]],
-    fields: dict[str, Any],
+    trainer: AbstractScanNNTrainer[Any, Any, Any],
     initial_carry: Any,
     epoch_data: tuple[BoolSzN, tuple[Any, ...]],
     /,
@@ -801,13 +802,7 @@ def _train_loop(
     step_kw: Mapping[str, Any],
     show_pbar: bool,
 ) -> tuple[Any, RealSzE]:
-    """Run the training loop of `AbstractScanNNTrainer.run`.
-
-    The trainer is passed as its class and a dict of its fields, so that
-    `filter_jit` traces array fields instead of hashing the trainer.
-    """
-    trainer = cls(**fields)
-
+    """Run the training loop of `AbstractScanNNTrainer.run`."""
     # Unpack epoch data
     mask, data_args = epoch_data
 
@@ -816,6 +811,8 @@ def _train_loop(
 
     # Generate epoch-level random keys
     epoch_keys = jr.split(key, num_epochs)
+
+    cls = type(trainer)
 
     # Both per-epoch hooks are opt-in. When `prepare_data_args` is not
     # overridden it is a no-op, so the unpack/repack round-trip needed to
@@ -950,6 +947,25 @@ def _train_loop(
     return final_carry, epoch_losses
 
 
+def _rebuild_and_train(
+    cls: type[AbstractScanNNTrainer[Any, Any, Any]],
+    state: dict[str, Any],
+    /,
+    *args: Any,
+    **kw: Any,
+) -> tuple[Any, RealSzE]:
+    """Rebuild the trainer from its stored state, then run `_train_loop`.
+
+    The attributes are set directly rather than through ``cls(**state)``, so
+    `__init__` and `__post_init__` don't run again: ``InitVar`` values and
+    ``init=False`` fields keep what they were, and nothing branches on tracers.
+    """
+    trainer = object.__new__(cls)
+    for name, value in state.items():
+        object.__setattr__(trainer, name, value)
+    return _train_loop(trainer, *args, **kw)
+
+
 # Unhashable static parts (e.g. a set, or a non-pytree object holding an array)
 # can't key the compile cache, so those calls run eagerly, as before this jit.
-_jit_train_loop = filter_jit(_train_loop, fallback="eager")
+_jit_train_loop = filter_jit(_rebuild_and_train, fallback="eager")

@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
 from typing import Any
 
 import jax
@@ -555,3 +555,26 @@ def test_run_show_pbar_under_jit(count_compiles: CountCompiles) -> None:
         second = _run(trainer, show_pbar=True)
     assert n[0] == 0
     assert jnp.allclose(first, second)
+
+
+@dataclass(frozen=True)
+class _InitVarTrainer(_TrivialTrainer):
+    """State set in `__post_init__` from an ``InitVar``, read by a hook."""
+
+    scale: InitVar[float] = 1.0
+    offset: float = field(init=False)
+
+    def __post_init__(self, scale: float) -> None:
+        object.__setattr__(self, "offset", 2.0 * scale)
+
+    def prepare_step_kw(self, /, **kw: Any) -> dict[str, Any]:
+        del kw
+        return {"offset": self.offset}
+
+
+@pytest.mark.parametrize("jit", [True, False])
+def test_run_keeps_initvar_and_init_false_state(*, jit: bool) -> None:
+    """`run` uses the trainer's stored state; it doesn't rebuild it with defaults."""
+    trainer = _InitVarTrainer(_sum_step, masked_mean, scale=3.0)
+    baseline = _run(_TrivialTrainer(make_step=_sum_step, loss_agg_fn=masked_mean))
+    assert jnp.allclose(_run(trainer, jit=jit), baseline + 6.0)

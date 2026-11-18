@@ -73,6 +73,12 @@ def test_numpy_leaves_are_traced(count_compiles: CountCompiles) -> None:
     assert jnp.allclose(out, 2.0)
 
 
+def test_numpy_string_scalars_are_static() -> None:
+    """`np.str_` can't be traced, so it is static like a Python string."""
+    f = filter_jit(lambda x, label: x + len(label))
+    assert jnp.allclose(f(jnp.zeros(2), np.str_("abc")), 3.0)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))

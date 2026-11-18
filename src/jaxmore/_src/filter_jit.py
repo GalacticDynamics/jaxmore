@@ -14,7 +14,9 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-_ARRAY_TYPES = (jax.Array, np.ndarray, np.generic)
+# NumPy's numeric and bool scalars, not all of `np.generic`: JAX can't trace
+# `np.str_` or `np.bytes_`, so those stay static.
+_ARRAY_TYPES = (jax.Array, np.ndarray, np.number, np.bool_)
 
 
 @jax.tree_util.register_static
@@ -80,13 +82,14 @@ def filter_jit(
     """Jit-compile ``fn``, tracing array leaves and treating the rest as static.
 
     All arguments are flattened as pytrees. Array leaves (`jax.Array`,
-    `numpy.ndarray`, `numpy.generic`) are traced. Every other leaf (Python
-    scalars, strings, functions, ...) is static: the compile cache is keyed on
-    the pytree structure plus those leaves and their types. The leaves are
-    compared with ``==``, as `jax.jit` compares ``static_argnums``, so values
-    that compare equal share a compiled program: ``0.0`` and ``-0.0`` do, and so
-    do two objects whose ``__eq__`` ignores a difference that changes the
-    trace. The output may also hold non-array leaves; they are returned as-is.
+    `numpy.ndarray`, and NumPy numeric and bool scalars) are traced. Every other
+    leaf (Python scalars, strings, functions, ...) is static: the compile cache
+    is keyed on the pytree structure plus those leaves and their types. The
+    leaves are compared with ``==``, as `jax.jit` compares ``static_argnums``,
+    so values that compare equal share a compiled program: ``0.0`` and ``-0.0``
+    do, and so do two objects whose ``__eq__`` ignores a difference that changes
+    the trace. The output may also hold non-array leaves; they are returned
+    as-is.
 
     The wrapped function is part of the cache key, so a module-level function
     reuses its compiled program even when it is wrapped again on every call.
