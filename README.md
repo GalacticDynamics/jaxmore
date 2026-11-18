@@ -212,8 +212,9 @@ A static leaf that can't be hashed raises a `TypeError` naming it, or, with
 `filter_jit(fn, fallback="eager")`, makes that call run without jit.
 
 This is the same split as `equinox.filter_jit` with its default filter, without
-the equinox dependency. NumPy arrays and NumPy scalars such as `np.float32(1.0)`
-are traced too, like JAX arrays.
+the equinox dependency. NumPy arrays and scalars that `jax.jit` accepts, such as
+`np.float32(1.0)`, are traced too, like JAX arrays. Others, like string or
+object arrays, are static.
 
 **When a call compiles again.** A call reuses an earlier compiled program when
 the array leaves have the same shapes and dtypes, and every static leaf compares
@@ -500,11 +501,11 @@ Key features:
 - **Automatic batching** — `shuffle_and_batch()` handles shuffling and padding
 - **Efficient scanning** — Uses `jax.lax.scan` for epochs and batches
   (JAX-friendly)
-- **Compiled once** — `run` is jitted with `filter_jit`, so a repeat call with
-  the same shapes and settings reuses the compiled program. For that,
-  `make_step` and `loss_agg_fn` must compare equal across calls: use a
-  module-level function or `equinox.Partial`, not `functools.partial` or a fresh
-  lambda. Pass `jit=False` to run eagerly.
+- **Compiled once, opt-in** — `run(..., jit=True)` jits the loop with
+  `filter_jit`, so a repeat call with the same shapes and settings reuses the
+  compiled program. For that, `make_step` and `loss_agg_fn` must compare equal
+  across calls: use a module-level function or `equinox.Partial`, not
+  `functools.partial` or a fresh lambda. By default `run` runs eagerly.
 - **Model partitioning** — Separate dynamic arrays (model weights) from static
   structure for efficient JIT compilation
 - **Loss aggregation** — Customize how per-batch losses combine into epoch

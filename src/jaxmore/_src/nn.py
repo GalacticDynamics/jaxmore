@@ -6,10 +6,11 @@ Neural network training utilities for JAX.
 __all__ = ("AbstractScanNNTrainer", "masked_mean", "shuffle_and_batch")
 
 import abc
-import dataclasses
+import functools
+import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeAlias, TypeVar
+from typing import Any, Generic, SupportsIndex, TypeAlias, TypeVar
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -293,11 +294,11 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
     5. **Loss aggregation** (per epoch): aggregates batch losses into epoch
        loss via the provided `loss_agg_fn`
 
-    `run` is jitted with `jaxmore.filter_jit` by default, so repeat calls reuse
-    the compiled program. For that, `make_step`, `loss_agg_fn` and the static
-    part of the carry must compare equal across calls. Use a module-level
-    function or `equinox.Partial`, not `functools.partial` (it compares by
-    identity) or a lambda built per call.
+    ``run(..., jit=True)`` runs the loop under `jaxmore.filter_jit`, so repeat
+    calls reuse the compiled program. It's off by default. For a cache hit,
+    `make_step`, `loss_agg_fn` and the carry's non-array leaves must compare
+    equal across calls. Use a module-level function or `equinox.Partial`, not
+    `functools.partial` (it compares by identity) or a lambda built per call.
 
     Note that `make_step` and `loss_agg_fn` are *constructor arguments*, not
     methods to override: you pass them in when instantiating the trainer. Only
@@ -465,6 +466,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
 
         The default implementation is a no-op that returns `data_args` unchanged.
 
+        With ``run(jit=True)``, `data_args` holds traced arrays,
+        so use `jax.numpy`, not NumPy or Python control flow on their values.
+
         Parameters
         ----------
         carry : CarryT
@@ -564,12 +568,12 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         epoch_data: tuple[BoolSzN, tuple[Any, ...]],
         /,
         *,
-        num_epochs: int,
-        batch_size: int,
+        num_epochs: SupportsIndex,
+        batch_size: SupportsIndex,
         key: PRNGKeyArray,
         step_kw: Mapping[str, Any] | None = None,
         show_pbar: bool = False,
-        jit: bool = True,
+        jit: bool = False,
     ) -> tuple[CarryT, RealSzE]:
         r"""Run the training loop over epochs with efficient batching and scanning.
 
@@ -600,9 +604,10 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
               `self.make_step`.
 
         num_epochs : int
-            Number of training epochs.
+            Number of training epochs. Any integer with ``__index__`` works,
+            e.g. a NumPy integer; it is converted to a Python int.
         batch_size : int
-            Batch size for training.
+            Batch size for training. Converted to a Python int the same way.
         key : PRNGKeyArray
             JAX random key for shuffling and other randomness.
         step_kw : Mapping[str, Any] | None, optional
@@ -614,12 +619,18 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             into: install it with the ``tqdm`` extra (e.g. ``pip install
             'jaxmore[tqdm]'``). Passing True without it raises `ImportError`.
         jit : bool, optional
-            If True (default), run the loop under `jaxmore.filter_jit`, so a
-            repeat call with the same shapes and static values reuses the
-            compiled program instead of compiling again. The trainer goes in
-            as a dict of its fields, so array fields are traced. If a non-array
-            part can't be hashed, the loop runs eagerly, with no error. Set
-            False to always run eagerly.
+            If True, run the loop under `jaxmore.filter_jit`, so a repeat call
+            with the same shapes and static values reuses the compiled program
+            instead of compiling again. Default: False, which runs the loop
+            eagerly. The trainer goes in as a dict of its stored attributes,
+            so array fields are traced. Array leaves of ``epoch_data``,
+            ``step_kw``, the fields and the carry, NumPy scalars included, are
+            traced too. That includes arrays your `pack_carry_state` keeps in
+            its static part, and the ``data_args`` that `prepare_data_args`
+            receives. Python control flow or NumPy calls on any of them fail
+            (e.g. ``x[: int(self.k)]`` or ``np.asarray(x)``); pass Python
+            numbers for those, or leave ``jit`` off. If a non-array part can't
+            be hashed or flattened, the loop runs eagerly, with no error.
 
         Returns
         -------
@@ -685,7 +696,9 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         carry, ``step_kw``, ``num_epochs`` and ``batch_size``. Functions compare
         by identity, so pass a module-level function or an `equinox.Partial`,
         not a `functools.partial` or a lambda built on every call. Otherwise
-        each call compiles again, as it would with ``jit=False``.
+        each call compiles again, as it would with ``jit=False``. Values read
+        from such parts are compiled in: if a config object that compares by
+        identity changes between calls, a cache hit still uses the old values.
 
         The carry is packed and unpacked around each epoch to isolate the
         trainable parameters from static structure, enabling efficient scanning.
@@ -767,26 +780,38 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
         (True, True)
 
         """
-        fields = {
-            f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.init
+        kw: dict[str, Any] = {
+            # `filter_jit` traces NumPy scalars, but these set shapes, so they
+            # must be static Python ints.
+            "num_epochs": operator.index(num_epochs),
+            "batch_size": operator.index(batch_size),
+            "key": key,
+            "step_kw": {} if step_kw is None else step_kw,
+            "show_pbar": bool(show_pbar),
         }
-        loop = _jit_train_loop if jit else _train_loop
-        return loop(
-            type(self),
-            fields,
-            initial_carry,
-            epoch_data,
-            num_epochs=num_epochs,
-            batch_size=batch_size,
-            key=key,
-            step_kw={} if step_kw is None else step_kw,
-            show_pbar=show_pbar,
-        )
+        if jit:
+            # Pass the trainer's stored state, not the trainer, so that
+            # `filter_jit` traces array fields instead of hashing the trainer.
+            # The base `object.__getstate__` gives the instance `__dict__` and
+            # every slot that is set, across the MRO (a slotted dataclass's own
+            # `__getstate__` would give its fields only).
+            raw: Any = object.__getstate__(self)
+            dict_state, slot_state = raw if isinstance(raw, tuple) else (raw, {})
+            state = {**(dict_state or {}), **slot_state}
+            packed, losses = _jit_train_loop(
+                type(self), state, initial_carry, epoch_data, **kw
+            )
+        else:
+            packed, losses = _train_loop(self, initial_carry, epoch_data, **kw)
+        # Unpack outside the jitted loop, with the static part packed from the
+        # concrete initial carry, as 0.5.0 did: a carry or static part that
+        # isn't a pytree is then built from concrete arrays, not tracers.
+        _, carry_static = self.pack_carry_state(initial_carry)
+        return self.unpack_carry_state(packed, carry_static), losses
 
 
 def _train_loop(
-    cls: type[AbstractScanNNTrainer[Any, Any, Any]],
-    fields: dict[str, Any],
+    trainer: AbstractScanNNTrainer[Any, Any, Any],
     initial_carry: Any,
     epoch_data: tuple[BoolSzN, tuple[Any, ...]],
     /,
@@ -797,13 +822,7 @@ def _train_loop(
     step_kw: Mapping[str, Any],
     show_pbar: bool,
 ) -> tuple[Any, RealSzE]:
-    """Run the training loop of `AbstractScanNNTrainer.run`.
-
-    The trainer is passed as its class and a dict of its fields, so that
-    `filter_jit` traces array fields instead of hashing the trainer.
-    """
-    trainer = cls(**fields)
-
+    """Run `AbstractScanNNTrainer.run`'s loop; return the packed final carry."""
     # Unpack epoch data
     mask, data_args = epoch_data
 
@@ -812,6 +831,8 @@ def _train_loop(
 
     # Generate epoch-level random keys
     epoch_keys = jr.split(key, num_epochs)
+
+    cls = type(trainer)
 
     # Both per-epoch hooks are opt-in. When `prepare_data_args` is not
     # overridden it is a no-op, so the unpack/repack round-trip needed to
@@ -940,12 +961,27 @@ def _train_loop(
     epoch_inputs = (epoch_indices, epoch_keys)
     packed_final_carry, epoch_losses = lax.scan(scan_fn, packed_carry, epoch_inputs)
 
-    # Unpack the final carry
-    final_carry = trainer.unpack_carry_state(packed_final_carry, carry_static)
-
-    return final_carry, epoch_losses
+    # `run` unpacks the final carry, outside any jit.
+    return packed_final_carry, epoch_losses
 
 
 # Unhashable static parts (e.g. a set, or a non-pytree object holding an array)
-# can't key the compile cache, so those calls run eagerly, as before this jit.
-_jit_train_loop = filter_jit(_train_loop, fallback="eager")
+# can't key the compile cache, so those calls run eagerly.
+@functools.partial(filter_jit, fallback="eager")
+def _jit_train_loop(
+    cls: type[AbstractScanNNTrainer[Any, Any, Any]],
+    state: dict[str, Any],
+    /,
+    *args: Any,
+    **kw: Any,
+) -> tuple[Any, RealSzE]:
+    """Rebuild the trainer from its stored state, then run `_train_loop`.
+
+    The attributes are set directly rather than through ``cls(**state)``, so
+    `__init__` and `__post_init__` don't run again: ``InitVar`` values and
+    ``init=False`` fields keep what they were, and nothing branches on tracers.
+    """
+    trainer = object.__new__(cls)
+    for name, value in state.items():
+        object.__setattr__(trainer, name, value)
+    return _train_loop(trainer, *args, **kw)
