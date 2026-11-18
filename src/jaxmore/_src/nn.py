@@ -780,7 +780,7 @@ class AbstractScanNNTrainer(Generic[CarryT, InputT, OutputT], metaclass=abc.ABCM
             "batch_size": operator.index(batch_size),
             "key": key,
             "step_kw": {} if step_kw is None else step_kw,
-            "show_pbar": show_pbar,
+            "show_pbar": bool(show_pbar),
         }
         if jit:
             # Pass the trainer's stored state, not the trainer, so that

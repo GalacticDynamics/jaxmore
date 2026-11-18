@@ -119,6 +119,15 @@ def test_static_types_are_compared_before_values() -> None:
     assert jnp.allclose(f(jnp.zeros(1), _Picky()), 1.0)
 
 
+@pytest.mark.parametrize("scalar", [np.longdouble(1.5), np.ulonglong(3)])
+def test_numpy_scalars_jit_rejects_are_static(scalar: np.generic) -> None:
+    """NumPy scalar types `jax.jit` won't take as arguments stay static."""
+    f = filter_jit(lambda x, s: (x * float(s), s))
+    y, s = f(jnp.ones(()), scalar)
+    assert jnp.allclose(y, float(scalar))
+    assert type(s) is type(scalar)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))

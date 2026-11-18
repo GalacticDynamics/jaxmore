@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, ParamSpec, TypeVar
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 P = ParamSpec("P")
@@ -19,15 +18,12 @@ _NUMPY_TYPES = (np.ndarray, np.generic)
 
 
 def _is_array(x: Any, /) -> bool:
-    # NumPy values count only when JAX can trace their dtype: bool, int, uint,
-    # float, complex, and JAX's extra number types (bfloat16, float8, int4...),
-    # whose NumPy kind is "V". String, bytes, object and datetime ones stay static.
-    if isinstance(x, jax.Array):
-        return True
-    if not isinstance(x, _NUMPY_TYPES):
-        return False
-    kind = x.dtype.kind
-    return kind in "biufc" or (kind == "V" and jnp.issubdtype(x.dtype, jnp.number))
+    # Ask JAX, so a NumPy value is traced exactly when `jax.jit` accepts it.
+    # bfloat16 and int4 are; strings, datetimes, objects, and scalar types like
+    # `np.longdouble` aren't, so they stay static.
+    return isinstance(x, jax.Array) or (
+        isinstance(x, _NUMPY_TYPES) and jax.core.valid_jaxtype(x)
+    )
 
 
 @jax.tree_util.register_static
@@ -95,12 +91,12 @@ def filter_jit(
     """Jit-compile ``fn``, tracing array leaves and treating the rest as static.
 
     All arguments are flattened as pytrees. Array leaves (`jax.Array`, and NumPy
-    arrays and scalars of a dtype JAX can trace: bool or a number type) are
-    traced. Every other leaf (Python scalars, strings, functions, ...) is
-    static: the compile cache is keyed on the pytree structure plus those
-    leaves and their types. The leaves are compared with ``==``, as `jax.jit`
-    compares ``static_argnums``, so values that compare equal share a compiled
-    program: ``0.0`` and ``-0.0`` do, and so do two objects whose ``__eq__``
+    arrays and scalars that `jax.jit` accepts as arguments) are traced. Every
+    other leaf (Python scalars, strings, functions, ...) is static: the compile
+    cache is keyed on the pytree structure plus those leaves and their types.
+    The leaves are compared with ``==``, as `jax.jit` compares
+    ``static_argnums``, so values that compare equal share a compiled program:
+    ``0.0`` and ``-0.0`` do, and so do two objects whose ``__eq__``
     ignores a difference that changes the trace. The output may also hold
     non-array leaves; they are returned as-is. Array leaves of the output, NumPy
     scalars included, come back as JAX arrays. The output must be a pytree down
