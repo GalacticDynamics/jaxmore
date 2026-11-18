@@ -21,9 +21,15 @@ def _is_array(x: Any, /) -> bool:
     # Ask JAX, so a NumPy value is traced exactly when `jax.jit` accepts it.
     # bfloat16 and int4 are; strings, datetimes, objects, and scalar types like
     # `np.longdouble` aren't, so they stay static.
-    return isinstance(x, jax.Array) or (
-        isinstance(x, _NUMPY_TYPES) and jax.core.valid_jaxtype(x)
-    )
+    if isinstance(x, jax.Array):
+        return True
+    if not isinstance(x, _NUMPY_TYPES):
+        return False
+    try:
+        return bool(jax.core.valid_jaxtype(x))
+    # e.g. it raises on NumPy masked arrays
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return False
 
 
 @jax.tree_util.register_static
@@ -62,7 +68,8 @@ def _call(dynamic: list[Any], static: _Static, /) -> tuple[list[Any], _Static]:
 def _hashable(x: Any, /) -> bool:
     try:
         hash(x)
-    except TypeError:
+    # Not only TypeError: e.g. `np.timedelta64(5)` raises ValueError.
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         return False
     return True
 
@@ -152,12 +159,10 @@ def filter_jit(
     @functools.wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         dynamic, static = _partition((fn, args, kwargs))
-        try:
-            hash(static)
-        except TypeError as e:
+        if not _hashable(static):
             if fallback == "eager":
                 return fn(*args, **kwargs)
-            raise _unhashable_error(fn, args, kwargs) from e
+            raise _unhashable_error(fn, args, kwargs)
         return _combine(*_call(dynamic, static))  # type: ignore[no-any-return]
 
     return wrapper

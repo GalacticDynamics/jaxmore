@@ -130,6 +130,19 @@ def test_numpy_scalars_jit_rejects_are_static(scalar: np.generic) -> None:
     assert type(s) is type(scalar)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [np.timedelta64(5), np.ma.array([1.0], mask=[True])],
+    ids=["hash-raises-ValueError", "masked-array"],
+)
+def test_odd_static_values_fall_back_or_raise_typeerror(value: object) -> None:
+    """Any failure to trace or hash takes the fallback, or raises TypeError."""
+    f = filter_jit(lambda x, *_: x, fallback="eager")
+    assert jnp.allclose(f(jnp.ones(2), value), 1.0)
+    with pytest.raises(TypeError, match="is not hashable"):
+        filter_jit(lambda x, *_: x)(jnp.ones(2), value)
+
+
 def test_non_array_outputs(count_compiles: CountCompiles) -> None:
     """Non-array leaves in the output come back unchanged."""
     f = filter_jit(lambda x, name: (name, {"n": 3, "y": x + 1}, None))
