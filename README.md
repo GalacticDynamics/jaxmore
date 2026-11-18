@@ -211,6 +211,37 @@ scale(jnp.arange(3.0), factor=2, label="double")
 A static leaf that can't be hashed raises a `TypeError` naming it, or, with
 `filter_jit(fn, fallback="eager")`, makes that call run without jit.
 
+This is the same split as `equinox.filter_jit` with its default filter, without
+the equinox dependency. NumPy arrays and NumPy scalars such as `np.float32(1.0)`
+are traced too, like JAX arrays.
+
+**When a call compiles again.** A call reuses an earlier compiled program when
+the array leaves have the same shapes and dtypes, and every static leaf compares
+equal to the earlier one. So a new value for a static Python number compiles
+again. To vary a number from call to call, pass it as an array:
+
+```python
+import jax.numpy as jnp
+from jaxmore import filter_jit
+
+
+@filter_jit
+def step(x, lr):
+    return x - lr * x
+
+
+x = jnp.ones(3)
+step(x, 0.1)  # compiles
+step(x, 0.2)  # `lr` is a static float with a new value, so this compiles again
+step(x, jnp.asarray(0.1))  # `lr` is traced: compiles once
+step(x, jnp.asarray(0.2))  # and reuses that program
+```
+
+Static leaves are compared with `==`, and functions compare by identity. A
+`functools.partial` or a lambda built on each call is a new object every time,
+so it never hits the cache. Pass a module-level function instead, or an
+`equinox.Partial`, which `filter_jit` flattens like any other pytree.
+
 ### `structured` — per-argument and per-return-value transformations
 
 `structured` is a decorator factory that applies user-supplied callables to
