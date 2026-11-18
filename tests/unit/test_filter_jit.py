@@ -122,6 +122,8 @@ def test_static_types_are_compared_before_values() -> None:
 @pytest.mark.parametrize("scalar", [np.longdouble(1.5), np.ulonglong(3)])
 def test_numpy_scalars_jit_rejects_are_static(scalar: np.generic) -> None:
     """NumPy scalar types `jax.jit` won't take as arguments stay static."""
+    if jax.core.valid_jaxtype(scalar):  # e.g. `np.ulonglong` is `np.uint64` on Windows
+        pytest.skip(f"jax.jit accepts {type(scalar).__name__} on this platform")
     f = filter_jit(lambda x, s: (x * float(s), s))
     y, s = f(jnp.ones(()), scalar)
     assert jnp.allclose(y, float(scalar))
